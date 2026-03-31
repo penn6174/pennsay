@@ -17,45 +17,13 @@
 - 使用本项目所产生的一切后果由使用者自行承担，作者不对因使用本项目而导致的任何损失或问题负责。
 - 如果本项目侵犯了相关方的权益，请联系作者删除。
 
-## 实现方式
+## 核心原理
 
-### 整体架构
+首次使用时，应用通过内嵌 WebView 加载豆包网页版完成登录，提取认证凭证（Cookie、设备标识等）保存到本地后立即销毁 WebView 释放资源。
 
-```
-┌─────────────────────────────────────────────┐
-│  doubao-murmur (菜单栏应用, 无 Dock 图标)      │
-├─────────────────────────────────────────────┤
-│  HotkeyManager        全局热键监听             │
-│  ├─ CGEvent tap 监听右 ⌥ Option / ESC         │
-│  └─ 需要辅助功能权限 (Accessibility)            │
-├─────────────────────────────────────────────┤
-│  WebViewManager       隐藏的 WKWebView        │
-│  ├─ 加载 https://www.doubao.com/chat          │
-│  ├─ JS 注入: 拦截 WebSocket ASR 消息           │
-│  ├─ JS 注入: DOM 操作 (点击语音按钮)            │
-│  ├─ WKContentRuleList: 屏蔽 /completion 请求   │
-│  └─ 自动授予麦克风权限                          │
-├─────────────────────────────────────────────┤
-│  OverlayPanel         浮动悬浮窗               │
-│  ├─ 屏幕顶部居中显示                            │
-│  └─ 实时展示识别文本                            │
-├─────────────────────────────────────────────┤
-│  TranscriptionManager 状态机调度器             │
-│  └─ idle → starting → recording → stopping    │
-├─────────────────────────────────────────────┤
-│  PasteHelper          剪贴板 + 自动粘贴        │
-│  ├─ NSPasteboard 写入文本                      │
-│  └─ CGEvent 模拟 ⌘V                           │
-└─────────────────────────────────────────────┘
-```
+后续使用时无需再加载网页。应用直接使用本地保存的凭证，通过原生 WebSocket 连接豆包的流式语音识别服务，将麦克风采集的音频实时发送到服务端，接收识别结果后自动粘贴到当前输入框。
 
-### 核心原理
-
-1. **内嵌 WebView 加载豆包**：应用启动后在后台加载 `doubao.com/chat`，复用豆包网页版的语音识别功能。
-2. **WebSocket 拦截**：在页面加载前通过 JS 注入 monkey-patch `WebSocket`，拦截豆包 ASR（语音识别）的 WebSocket 消息，实时获取识别结果。
-3. **DOM 操控**：通过 JS 注入模拟点击豆包页面上的语音输入按钮，控制录音的开始和结束。
-4. **请求屏蔽**：使用 `WKContentRuleList` 屏蔽 `/chat/completion` 请求，阻止豆包将语音识别结果发送给大模型。
-5. **全局热键**：通过 `CGEvent tap` 监听右 `⌥ Option` 键，实现全局快捷键触发，无需切换到应用窗口。
+当凭证过期时，应用会自动检测并提示重新登录，登录后再次提取凭证并销毁 WebView，如此循环。
 
 ## 使用方式
 
@@ -126,8 +94,8 @@ xcodegen generate
 推送 `v*` 格式的 tag 会自动触发 GitHub Actions 构建并创建 Release：
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 ## License
