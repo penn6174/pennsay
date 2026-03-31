@@ -3,6 +3,22 @@
 (function() {
     'use strict';
 
+    // --- Page Visibility API override ---
+    // Prevent the page from knowing it's hidden so that media capture
+    // (getUserMedia) and JS timers keep running normally in the background.
+    Object.defineProperty(document, 'visibilityState', {
+        get: function() { return 'visible'; },
+        configurable: true
+    });
+    Object.defineProperty(document, 'hidden', {
+        get: function() { return false; },
+        configurable: true
+    });
+    // Suppress visibilitychange events so page logic never enters a "hidden" branch
+    document.addEventListener('visibilitychange', function(e) {
+        e.stopImmediatePropagation();
+    }, true);
+
     // --- Fetch interception: detect profile API for login status ---
     const OriginalFetch = window.fetch;
     window.fetch = function() {

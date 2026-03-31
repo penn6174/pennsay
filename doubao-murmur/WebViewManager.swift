@@ -2,6 +2,13 @@ import Foundation
 import WebKit
 import Combine
 
+/// NSWindow subclass that always reports its occlusion state as visible.
+/// This prevents WebKit from throttling JS timers, suspending media capture,
+/// or marking the page as hidden via the Page Visibility API.
+private class AlwaysActiveWindow: NSWindow {
+    override var occlusionState: OcclusionState { .visible }
+}
+
 @MainActor
 class WebViewManager: NSObject {
     private let appState: AppState
@@ -70,8 +77,8 @@ class WebViewManager: NSObject {
         webView.uiDelegate = self
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
 
-        // Create hidden window to host webview
-        webViewWindow = NSWindow(
+        // Create window to host webview (AlwaysActiveWindow keeps WebKit alive)
+        webViewWindow = AlwaysActiveWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
