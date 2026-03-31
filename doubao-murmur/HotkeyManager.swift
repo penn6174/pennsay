@@ -11,6 +11,7 @@ class HotkeyManager {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var accessibilityPollTimer: Timer?
     private var rightOptionDown = false
     private var otherKeyPressed = false
     private var lastToggleTime: TimeInterval = 0
@@ -35,6 +36,7 @@ class HotkeyManager {
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
             print("[HotkeyManager] ❌ Failed to create event tap. Accessibility permission may be needed.")
+            startPollingForAccessibility()
             return
         }
 
@@ -45,7 +47,24 @@ class HotkeyManager {
         print("[HotkeyManager] ✅ Event tap started successfully")
     }
 
+    private func startPollingForAccessibility() {
+        // Poll every 1 second to check if accessibility permission has been granted
+        accessibilityPollTimer?.invalidate()
+        print("[HotkeyManager] ⏳ Polling for accessibility permission...")
+        accessibilityPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if AXIsProcessTrusted() {
+                print("[HotkeyManager] ✅ Accessibility permission granted, retrying event tap...")
+                self.accessibilityPollTimer?.invalidate()
+                self.accessibilityPollTimer = nil
+                self.start()
+            }
+        }
+    }
+
     func stop() {
+        accessibilityPollTimer?.invalidate()
+        accessibilityPollTimer = nil
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }

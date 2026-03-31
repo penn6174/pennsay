@@ -36,7 +36,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Doubao Murmur")
+            button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Doubao Murmur")
         }
         let menu = NSMenu()
         menu.delegate = self
