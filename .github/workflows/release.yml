@@ -21,6 +21,11 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Extract version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+
       - name: Build
         run: |
           xcodebuild -project doubao-murmur.xcodeproj \
@@ -29,6 +34,8 @@ jobs:
             -derivedDataPath build \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION=YES \
+            MARKETING_VERSION="$APP_VERSION" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             build
 
       - name: Package app
