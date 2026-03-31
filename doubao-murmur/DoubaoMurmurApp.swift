@@ -72,7 +72,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(NSMenuItem(title: "重新加载", action: #selector(reloadWebView), keyEquivalent: "r"))
-        menu.addItem(NSMenuItem(title: "显示 WebView", action: #selector(showWebView), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "使用帮助", action: #selector(showHelp), keyEquivalent: "h"))
         menu.addItem(NSMenuItem.separator())
@@ -89,10 +88,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func reloadWebView() {
         webViewManager.reload()
-    }
-
-    @objc private func showWebView() {
-        webViewManager.showLoginWindow()
     }
 
     @objc private func showHelp() {
@@ -142,14 +137,57 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return }
             if status == "loggedIn" {
                 self.appState.loginStatus = .loggedIn
-                self.webViewManager.hideLoginWindow()
                 print("[AppDelegate] Logged in as: \(nickname ?? "unknown")")
+                // Extract ASR params, save to local config, then destroy webview
+                self.extractSaveAndDestroyWebView()
             } else {
                 self.appState.loginStatus = .notLoggedIn
             }
         }
 
-        webViewManager.load()
+        // Check if we have saved params — if so, skip loading the webview entirely
+        if ASRParamsStore.hasSavedParams {
+            appState.loginStatus = .loggedIn
+            print("[AppDelegate] ✅ Saved ASR params found, skipping WebView load")
+        } else {
+            webViewManager.load()
+            print("[AppDelegate] No saved params, loading WebView for login")
+        }
+    }
+
+    /// Extract ASR params from the active webview, save to disk, then destroy the webview.
+    private func extractSaveAndDestroyWebView() {
+        Task {
+            // Wait a moment for cookies/localStorage to fully settle after login
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+
+            if let params = await webViewManager.extractASRParams() {
+                ASRParamsStore.save(params)
+                print("[AppDelegate] ✅ ASR params saved, destroying WebView")
+            } else {
+                print("[AppDelegate] ⚠️ Failed to extract ASR params after login")
+            }
+
+            // Destroy webview to free resources regardless
+            webViewManager.hideLoginWindow()
+            webViewManager.destroyWebView()
+        }
+    }
+
+    /// Handle auth expiration: prompt user and re-open webview if they agree.
+    private func handleAuthExpired() {
+        let alert = NSAlert()
+        alert.messageText = "认证已过期"
+        alert.informativeText = "豆包登录凭证已失效，需要重新登录以继续使用语音识别。"
+        alert.addButton(withTitle: "重新登录")
+        alert.addButton(withTitle: "取消")
+        alert.alertStyle = .warning
+
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            webViewManager.showLoginWindow()
+        }
     }
 
     private func setupHotkey() {
@@ -180,6 +218,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             overlayPanel: overlayPanel,
             hotkeyManager: hotkeyManager
         )
+
+        // Handle auth expiration — prompt user to re-login
+        transcriptionManager.onAuthExpired = { [weak self] in
+            self?.handleAuthExpired()
+        }
+
         transcriptionManager.start()
         print("[AppDelegate] Transcription manager started")
     }

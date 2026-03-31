@@ -7,6 +7,14 @@ class TranscriptionManager {
     private let webViewManager: WebViewManager
     private let overlayPanel: OverlayPanel
     private let hotkeyManager: HotkeyManager
+    private let asrClient = DoubaoASRClient()
+    private let audioCapture = AudioCaptureManager()
+
+    /// Whether the current WSS connection is using cached (file-based) params.
+    private var usingCachedParams = false
+
+    /// Called when auth has expired and user needs to re-login.
+    var onAuthExpired: (() -> Void)?
 
     init(
         appState: AppState,
@@ -25,10 +33,7 @@ class TranscriptionManager {
         hotkeyManager.onHotkeyEvent = { [weak self] event in
             print("[TranscriptionManager] Received hotkey event: \(event)")
             Task { @MainActor in
-                guard let self = self else {
-                    print("[TranscriptionManager] ⚠️ self is nil in hotkey handler")
-                    return
-                }
+                guard let self = self else { return }
                 switch event {
                 case .toggleRecording:
                     self.handleToggle()
@@ -38,13 +43,65 @@ class TranscriptionManager {
             }
         }
 
-        // Wire up ASR WebSocket messages
-        webViewManager.onASRMessage = { [weak self] type, text in
-            print("[TranscriptionManager] Received ASR message: type=\(type), text=\(text ?? "nil")")
+        // Wire up native ASR client callbacks
+        asrClient.onOpen = { [weak self] in
             Task { @MainActor in
                 guard let self = self else { return }
-                self.handleASRMessage(type: type, text: text)
+                print("[TranscriptionManager] ASR WebSocket opened, buffered audio flushed")
+                guard self.appState.recordingState == .starting else { return }
+                self.appState.recordingState = .recording
+                // Audio capture is already running; buffered data was flushed by ASR client.
             }
+        }
+
+        asrClient.onResult = { [weak self] text in
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.appState.transcriptionText = text
+                if self.appState.recordingState == .starting {
+                    self.appState.recordingState = .recording
+                }
+            }
+        }
+
+        asrClient.onFinish = { [weak self] in
+            Task { @MainActor in
+                guard let self = self else { return }
+                if self.appState.recordingState == .stopping || self.appState.recordingState == .recording {
+                    self.completeTranscription()
+                }
+            }
+        }
+
+        asrClient.onError = { [weak self] error in
+            Task { @MainActor in
+                guard let self = self else { return }
+                guard self.appState.recordingState != .idle else { return }
+                print("[TranscriptionManager] ASR error: \(error?.localizedDescription ?? "unknown")")
+
+                // If we used cached params and got a connection error, it might be auth-related
+                if self.usingCachedParams {
+                    self.handleAuthFailure()
+                    return
+                }
+
+                self.appState.errorMessage = "连接出错"
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    self?.resetToIdle()
+                }
+            }
+        }
+
+        asrClient.onAuthError = { [weak self] in
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.handleAuthFailure()
+            }
+        }
+
+        // Pipe captured audio directly to the ASR client
+        audioCapture.onAudioData = { [weak self] data in
+            self?.asrClient.sendAudio(data)
         }
 
         hotkeyManager.start()
@@ -61,14 +118,13 @@ class TranscriptionManager {
         case .starting, .recording:
             stopRecording()
         case .stopping:
-            // Already stopping, ignore
             break
         }
     }
 
     private func startRecording() {
         guard appState.loginStatus == .loggedIn else {
-            print("[TranscriptionManager] ⚠️ Not logged in (status=\(appState.loginStatus)), showing login window")
+            print("[TranscriptionManager] ⚠️ Not logged in, showing login window")
             webViewManager.showLoginWindow()
             return
         }
@@ -78,18 +134,46 @@ class TranscriptionManager {
         appState.transcriptionText = ""
         appState.errorMessage = nil
         overlayPanel.showOverlay()
-        print("[TranscriptionManager] Overlay shown, clicking ASR button...")
 
-        webViewManager.clickAsrButton { [weak self] clicked in
-            guard let self = self else { return }
-            Task { @MainActor in
-                if !clicked {
-                    print("[TranscriptionManager] ⚠️ ASR button not found in DOM")
-                    self.appState.errorMessage = "语音按钮未找到，请稍后重试"
+        // Start audio capture immediately — audio is buffered in ASR client until WebSocket connects.
+        do {
+            try audioCapture.startCapture()
+        } catch {
+            print("[TranscriptionManager] ❌ Audio capture failed: \(error)")
+            appState.errorMessage = "麦克风启动失败"
+            resetToIdle()
+            return
+        }
+
+        Task {
+            // 1. Try cached params from local config file first
+            if let cachedParams = ASRParamsStore.load() {
+                print("[TranscriptionManager] Using cached ASR params")
+                self.usingCachedParams = true
+                self.asrClient.connect(params: cachedParams)
+                return
+            }
+
+            // 2. Fall back to extracting from active WebView
+            if webViewManager.isActive {
+                guard let params = await webViewManager.extractASRParams() else {
+                    self.appState.errorMessage = "无法获取连接参数，请重新登录"
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                         self?.resetToIdle()
                     }
+                    return
                 }
+                // Save for future use
+                ASRParamsStore.save(params)
+                self.usingCachedParams = false
+                self.asrClient.connect(params: params)
+                return
+            }
+
+            // 3. No params available at all
+            self.appState.errorMessage = "无法获取连接参数，请重新登录"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                self?.resetToIdle()
             }
         }
     }
@@ -97,72 +181,33 @@ class TranscriptionManager {
     private func stopRecording() {
         print("[TranscriptionManager] ⏹ Stopping recording...")
         appState.recordingState = .stopping
-        webViewManager.clickAsrButton()
+        audioCapture.stopCapture()
+        asrClient.disconnect()
+        completeTranscription()
+    }
 
-        // Timeout: if no finish event within 5 seconds, force complete
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            if appState.recordingState == .stopping {
-                completeTranscription()
-            }
-        }
+    // MARK: - Auth Failure
+
+    private func handleAuthFailure() {
+        print("[TranscriptionManager] ⚠️ Auth failure detected, clearing cached params")
+        ASRParamsStore.clear()
+        usingCachedParams = false
+        audioCapture.stopCapture()
+        asrClient.disconnect()
+        resetToIdle()
+
+        // Notify delegate (AppDelegate) to prompt user for re-auth
+        appState.loginStatus = .notLoggedIn
+        onAuthExpired?()
     }
 
     // MARK: - Cancel
 
     private func handleCancel() {
         guard appState.recordingState != .idle else { return }
-
-        // If ASR is active, click button to deactivate
-        if appState.recordingState == .recording || appState.recordingState == .starting {
-            webViewManager.clickAsrButton()
-        }
-
+        audioCapture.stopCapture()
+        asrClient.disconnect()
         resetToIdle()
-    }
-
-    // MARK: - ASR Message Handling
-
-    private func handleASRMessage(type: String, text: String?) {
-        switch type {
-        case "open":
-            print("[TranscriptionManager] ASR WebSocket opened")
-            if appState.recordingState == .starting {
-                appState.recordingState = .recording
-            }
-
-        case "result":
-            if let text = text, !text.isEmpty {
-                appState.transcriptionText = text
-                if appState.recordingState == .starting {
-                    appState.recordingState = .recording
-                }
-            }
-
-        case "finish":
-            if appState.recordingState == .stopping || appState.recordingState == .recording {
-                completeTranscription()
-            }
-
-        case "close":
-            if appState.recordingState == .stopping {
-                completeTranscription()
-            } else if appState.recordingState == .recording || appState.recordingState == .starting {
-                appState.errorMessage = "连接已断开"
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                    self?.resetToIdle()
-                }
-            }
-
-        case "error":
-            appState.errorMessage = "语音识别出错"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                self?.resetToIdle()
-            }
-
-        default:
-            break
-        }
     }
 
     // MARK: - Completion
@@ -175,20 +220,18 @@ class TranscriptionManager {
             PasteHelper.copyAndPaste(text)
         }
 
-        // After ASR finishes, doubao tries to send text to LLM (/chat/completion).
-        // Even though the request is blocked, the UI shows a "break" button instead of
-        // the ASR button until the request times out. Click it to restore normal state.
-        webViewManager.clickBreakButton()
-
         resetToIdle()
     }
 
     private func resetToIdle() {
         print("[TranscriptionManager] Resetting to idle")
+        audioCapture.stopCapture()
+        asrClient.disconnect()
         appState.recordingState = .idle
         appState.showOverlay = false
         appState.errorMessage = nil
         overlayPanel.hideOverlay()
+        usingCachedParams = false
 
         // Clear transcription text after a short delay (so paste can complete)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in

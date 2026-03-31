@@ -12,28 +12,30 @@ private class AlwaysActiveWindow: NSWindow {
 @MainActor
 class WebViewManager: NSObject {
     private let appState: AppState
-    private var webView: WKWebView!
-    private var webViewWindow: NSWindow!
-    private var cancellables = Set<AnyCancellable>()
+    private var webView: WKWebView?
+    private var webViewWindow: NSWindow?
 
-    // Callback for ASR messages
-    var onASRMessage: ((_ type: String, _ text: String?) -> Void)?
+    /// Whether the WKWebView is currently loaded and active.
+    var isActive: Bool { webView != nil }
+
     // Callback for login status changes
     var onLoginStatusChange: ((_ status: String, _ nickname: String?) -> Void)?
 
     init(appState: AppState) {
         self.appState = appState
         super.init()
-        setupWebView()
+        // WebView is NOT created here; call load() to create on demand.
     }
 
     private func setupWebView() {
+        guard webView == nil else { return }
+
         let config = WKWebViewConfiguration()
 
         // User content controller for JS injection + message handling
         let userContent = WKUserContentController()
 
-        // Inject WebSocket interceptor at document start
+        // Inject login detector + visibility override at document start
         if let wsJS = loadJSResource("inject-websocket") {
             let wsScript = WKUserScript(source: wsJS, injectionTime: .atDocumentStart, forMainFrameOnly: false)
             userContent.addUserScript(wsScript)
@@ -45,48 +47,29 @@ class WebViewManager: NSObject {
             userContent.addUserScript(domScript)
         }
 
-        // Register message handler for ASR
+        // Register message handler
         userContent.add(self, name: "asrHandler")
-
-        // Block /chat/completion requests via content rule list
-        let blockRule = """
-        [{
-            "trigger": {"url-filter": ".*/chat/completion.*"},
-            "action": {"type": "block"}
-        }]
-        """
-        WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "BlockCompletion",
-            encodedContentRuleList: blockRule
-        ) { [weak userContent] ruleList, error in
-            if let ruleList = ruleList {
-                userContent?.add(ruleList)
-            }
-        }
 
         config.userContentController = userContent
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
 
-        // Allow media capture without gesture
-        if config.responds(to: Selector(("setMediaTypesRequiringUserActionForPlayback:"))) {
-            config.mediaTypesRequiringUserActionForPlayback = []
-        }
-
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 800), configuration: config)
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
-        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+        let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 800), configuration: config)
+        wv.navigationDelegate = self
+        wv.uiDelegate = self
+        wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+        self.webView = wv
 
         // Create window to host webview (AlwaysActiveWindow keeps WebKit alive)
-        webViewWindow = AlwaysActiveWindow(
+        let window = AlwaysActiveWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
-        webViewWindow.title = "Doubao Murmur - Login"
-        webViewWindow.contentView = webView
-        webViewWindow.isReleasedWhenClosed = false
+        window.title = "Doubao Murmur - Login"
+        window.contentView = wv
+        window.isReleasedWhenClosed = false
+        self.webViewWindow = window
         enterBackgroundMode()
     }
 
@@ -94,11 +77,12 @@ class WebViewManager: NSObject {
     /// JS execution, but hidden from the user by placing it below the
     /// desktop level and excluding it from Mission Control / Cmd+Tab.
     private func enterBackgroundMode() {
-        webViewWindow.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
-        webViewWindow.collectionBehavior = [.transient, .ignoresCycle]
-        webViewWindow.ignoresMouseEvents = true
-        if !webViewWindow.isVisible {
-            webViewWindow.orderBack(nil)
+        guard let window = webViewWindow else { return }
+        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.collectionBehavior = [.transient, .ignoresCycle]
+        window.ignoresMouseEvents = true
+        if !window.isVisible {
+            window.orderBack(nil)
         }
     }
 
@@ -112,22 +96,35 @@ class WebViewManager: NSObject {
 
     // MARK: - Public API
 
+    /// Create the webview (if needed) and load doubao.com.
     func load() {
+        if webView == nil {
+            setupWebView()
+        }
         let url = URL(string: "https://www.doubao.com/chat")!
-        webView.load(URLRequest(url: url))
+        webView?.load(URLRequest(url: url))
     }
 
     func reload() {
         appState.loginStatus = .checking
-        webView.reload()
+        if let wv = webView {
+            wv.reload()
+        } else {
+            load()
+        }
     }
 
     func showLoginWindow() {
-        webViewWindow.level = .normal
-        webViewWindow.collectionBehavior = []
-        webViewWindow.ignoresMouseEvents = false
-        webViewWindow.center()
-        webViewWindow.makeKeyAndOrderFront(nil)
+        // Ensure webview exists before showing
+        if webView == nil {
+            load()
+        }
+        guard let window = webViewWindow else { return }
+        window.level = .normal
+        window.collectionBehavior = []
+        window.ignoresMouseEvents = false
+        window.center()
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -135,57 +132,28 @@ class WebViewManager: NSObject {
         enterBackgroundMode()
     }
 
-    func clickAsrButton(completion: ((Bool) -> Void)? = nil) {
-        webView.evaluateJavaScript("window.__doubaoMurmur.clickAsrButton()") { result, error in
-            if let error = error {
-                print("[WebViewManager] clickAsrButton error: \(error)")
-                completion?(false)
-                return
-            }
-            let clicked = result as? Bool ?? false
-            print("[WebViewManager] clickAsrButton result: \(clicked)")
-            completion?(clicked)
-        }
-    }
-
-    /// Try to click the break button that appears after ASR finishes.
-    /// Retries up to `maxRetries` times with `interval` between attempts,
-    /// because the button may appear with a slight delay after the blocked request starts.
-    func clickBreakButton(maxRetries: Int = 5, interval: TimeInterval = 0.5) {
-        var attempt = 0
-        func tryClick() {
-            webView.evaluateJavaScript("window.__doubaoMurmur.clickBreakButton()") { result, error in
-                let clicked = result as? Bool ?? false
-                attempt += 1
-                if clicked {
-                    print("[WebViewManager] Break button clicked on attempt \(attempt)")
-                } else if attempt < maxRetries {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + interval) {
-                        tryClick()
-                    }
-                } else {
-                    print("[WebViewManager] Break button not found after \(maxRetries) attempts (may not have appeared)")
-                }
-            }
-        }
-        tryClick()
-    }
-
-    func getAsrButtonState(completion: @escaping (String) -> Void) {
-        webView.evaluateJavaScript("window.__doubaoMurmur.getAsrButtonState()") { result, error in
-            completion((result as? String) ?? "unknown")
-        }
+    /// Completely destroy the WKWebView and its hosting window to free resources.
+    func destroyWebView() {
+        webView?.stopLoading()
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "asrHandler")
+        webView?.configuration.userContentController.removeAllUserScripts()
+        webView?.navigationDelegate = nil
+        webView?.uiDelegate = nil
+        webView = nil
+        webViewWindow?.orderOut(nil)
+        webViewWindow?.contentView = nil
+        webViewWindow = nil
+        print("[WebViewManager] ♻️ WebView destroyed to free resources")
     }
 
     func checkLoginState() {
-        // Login detection is now handled by fetch/XHR interception in inject-websocket.js.
-        // The profile API call (/alice/profile/self) is intercepted and sends a 'login' message.
+        guard let wv = webView else { return }
+        // Login detection is handled by fetch/XHR interception in inject-websocket.js.
         // As a fallback, check the DOM after a delay.
-        webView.evaluateJavaScript("window.__doubaoMurmur.isLoginButtonPresent()") { [weak self] result, error in
+        wv.evaluateJavaScript("window.__doubaoMurmur.isLoginButtonPresent()") { [weak self] result, error in
             guard let self = self else { return }
             Task { @MainActor in
                 if let isLoginButton = result as? Bool, isLoginButton {
-                    // Login button present means definitely not logged in
                     if self.appState.loginStatus == .checking {
                         self.appState.loginStatus = .notLoggedIn
                     }
@@ -195,17 +163,75 @@ class WebViewManager: NSObject {
     }
 
     func logout() {
-        let dataStore = webView.configuration.websiteDataStore
+        // Clear saved params
+        ASRParamsStore.clear()
+        // Clear WKWebsiteDataStore (works even without an active webview)
+        let dataStore = WKWebsiteDataStore.default()
         let allTypes = WKWebsiteDataStore.allWebsiteDataTypes()
         dataStore.fetchDataRecords(ofTypes: allTypes) { records in
             let doubaoRecords = records.filter { $0.displayName.contains("doubao") }
             dataStore.removeData(ofTypes: allTypes, for: doubaoRecords) { [weak self] in
                 Task { @MainActor in
                     self?.appState.loginStatus = .notLoggedIn
-                    self?.load()
+                    // If webview is active, reload it to show login page
+                    if self?.webView != nil {
+                        self?.load()
+                    }
                 }
             }
         }
+    }
+
+    // MARK: - ASR Parameter Extraction
+
+    /// Extract cookies and localStorage parameters needed for native WSS ASR connection.
+    func extractASRParams() async -> DoubaoASRParams? {
+        guard let wv = webView else {
+            print("[WebViewManager] ⚠️ WebView not active, cannot extract params")
+            return nil
+        }
+
+        // 1. Extract all doubao.com cookies (including httpOnly session cookies)
+        let cookies = await withCheckedContinuation { continuation in
+            wv.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+                continuation.resume(returning: cookies)
+            }
+        }
+        let doubaoCookies = cookies.filter { $0.domain.contains("doubao.com") }
+
+        guard !doubaoCookies.isEmpty else {
+            print("[WebViewManager] ⚠️ No doubao cookies found")
+            return nil
+        }
+
+        // 2. Extract device_id from localStorage
+        var deviceId = ""
+        if let raw = try? await wv.evaluateJavaScript(
+            "localStorage.getItem('samantha_web_web_id')"
+        ) as? String,
+           let data = raw.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            deviceId = (parsed["web_id"] as? String) ?? ""
+        }
+
+        // 3. Extract web_id / tea_uuid from localStorage
+        var webId = ""
+        if let raw = try? await wv.evaluateJavaScript(
+            "localStorage.getItem('__tea_cache_tokens_497858')"
+        ) as? String,
+           let data = raw.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            webId = (parsed["web_id"] as? String) ?? ""
+        }
+
+        guard !deviceId.isEmpty, !webId.isEmpty else {
+            print("[WebViewManager] ⚠️ Failed to extract localStorage params (deviceId=\(deviceId), webId=\(webId))")
+            return nil
+        }
+
+        let params = DoubaoASRParams(httpCookies: doubaoCookies, deviceId: deviceId, webId: webId)
+        print("[WebViewManager] ✅ ASR params extracted (cookies=\(doubaoCookies.count), deviceId=\(deviceId), webId=\(webId))")
+        return params
     }
 }
 
@@ -233,12 +259,6 @@ extension WebViewManager: WKScriptMessageHandler {
             print("[WebViewManager] [JS Debug] \(text)")
             return
         }
-
-        let text = body["text"] as? String
-
-        Task { @MainActor in
-            self.onASRMessage?(type, text)
-        }
     }
 }
 
@@ -246,7 +266,6 @@ extension WebViewManager: WKScriptMessageHandler {
 extension WebViewManager: WKNavigationDelegate {
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
-            // Check login state after page load
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 self?.checkLoginState()
             }
@@ -289,7 +308,6 @@ extension WebViewManager: WKUIDelegate {
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        // Load in same webview instead of opening new window
         if navigationAction.targetFrame == nil {
             webView.load(navigationAction.request)
         }
