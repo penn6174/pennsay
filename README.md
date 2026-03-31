@@ -4,6 +4,10 @@
 
 按下右 `⌥ Option` 键开始/停止语音识别，识别结果自动复制到剪贴板并粘贴到当前光标所在的输入框。
 
+<p align="center">
+  <img src="docs/screenshots/overlay_pannel.png" width="500" alt="语音识别悬浮窗">
+</p>
+
 ## 免责声明
 
 - **本项目仅供个人学习和研究使用**，不得用于任何商业用途。
@@ -76,12 +80,18 @@
 
 ### 使用流程
 
+<img src="docs/screenshots/menu_bar.png" width="240" alt="菜单栏">
+
 1. 确保菜单栏显示「已登录」状态
 2. 将光标定位到任意输入框
 3. 按下右 `⌥ Option` 键，屏幕顶部出现悬浮窗，开始说话
 4. 悬浮窗中会实时显示识别到的文字
 5. 再次按下右 `⌥ Option` 键结束识别，文字会自动复制到剪贴板并粘贴到输入框
 6. 如果想取消，按 `ESC` 即可
+
+点击菜单中的「使用帮助」可查看快捷键和使用说明：
+
+<img src="docs/screenshots/help_pannel.png" width="400" alt="使用帮助">
 
 ## 开发
 
