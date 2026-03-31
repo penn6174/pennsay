@@ -80,8 +80,19 @@ class WebViewManager: NSObject {
         webViewWindow.title = "Doubao Murmur - Login"
         webViewWindow.contentView = webView
         webViewWindow.isReleasedWhenClosed = false
-        // Start hidden
-        webViewWindow.orderOut(nil)
+        enterBackgroundMode()
+    }
+
+    /// Keep the window "visible" to the system so WebKit won't suspend
+    /// JS execution, but hidden from the user by placing it below the
+    /// desktop level and excluding it from Mission Control / Cmd+Tab.
+    private func enterBackgroundMode() {
+        webViewWindow.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        webViewWindow.collectionBehavior = [.transient, .ignoresCycle]
+        webViewWindow.ignoresMouseEvents = true
+        if !webViewWindow.isVisible {
+            webViewWindow.orderBack(nil)
+        }
     }
 
     private func loadJSResource(_ name: String) -> String? {
@@ -105,13 +116,16 @@ class WebViewManager: NSObject {
     }
 
     func showLoginWindow() {
+        webViewWindow.level = .normal
+        webViewWindow.collectionBehavior = []
+        webViewWindow.ignoresMouseEvents = false
         webViewWindow.center()
         webViewWindow.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func hideLoginWindow() {
-        webViewWindow.orderOut(nil)
+        enterBackgroundMode()
     }
 
     func clickAsrButton(completion: ((Bool) -> Void)? = nil) {
