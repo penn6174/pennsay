@@ -71,8 +71,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(NSMenuItem(title: "退出登录", action: #selector(doLogout), keyEquivalent: ""))
         }
 
-        menu.addItem(NSMenuItem(title: "重新加载", action: #selector(reloadWebView), keyEquivalent: "r"))
-        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "使用帮助", action: #selector(showHelp), keyEquivalent: "h"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q"))
@@ -84,10 +82,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func doLogout() {
         webViewManager.logout()
-    }
-
-    @objc private func reloadWebView() {
-        webViewManager.reload()
     }
 
     @objc private func showHelp() {
