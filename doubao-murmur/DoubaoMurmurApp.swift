@@ -96,9 +96,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showHelp() {
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知"
+        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "未知"
+
         let alert = NSAlert()
         alert.messageText = "Doubao Murmur 使用帮助"
         alert.informativeText = """
+        版本: \(appVersion) (\(buildNumber))
+
         语音输入法，基于豆包语音识别。
 
         快捷键:

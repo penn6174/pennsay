@@ -12,6 +12,8 @@ class HotkeyManager {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var accessibilityPollTimer: Timer?
+    private var tapRetryCount = 0
+    private let maxTapRetries = 30
     private var rightOptionDown = false
     private var otherKeyPressed = false
     private var lastToggleTime: TimeInterval = 0
@@ -25,6 +27,19 @@ class HotkeyManager {
         let trusted = AXIsProcessTrusted()
         print("[HotkeyManager] Accessibility trusted: \(trusted)")
 
+        if tryCreateEventTap() {
+            tapRetryCount = 0
+            return
+        }
+
+        print("[HotkeyManager] ❌ Failed to create event tap. Accessibility permission may be needed.")
+        if !trusted {
+            requestAccessibilityPermission()
+        }
+        startPollingForEventTap()
+    }
+
+    private func tryCreateEventTap() -> Bool {
         let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
 
         guard let tap = CGEvent.tapCreate(
@@ -35,9 +50,7 @@ class HotkeyManager {
             callback: hotkeyCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            print("[HotkeyManager] ❌ Failed to create event tap. Accessibility permission may be needed.")
-            startPollingForAccessibility()
-            return
+            return false
         }
 
         eventTap = tap
@@ -45,19 +58,30 @@ class HotkeyManager {
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         print("[HotkeyManager] ✅ Event tap started successfully")
+        return true
     }
 
-    private func startPollingForAccessibility() {
-        // Poll every 1 second to check if accessibility permission has been granted
+    private func startPollingForEventTap() {
         accessibilityPollTimer?.invalidate()
-        print("[HotkeyManager] ⏳ Polling for accessibility permission...")
-        accessibilityPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        tapRetryCount = 0
+        print("[HotkeyManager] ⏳ Polling for event tap creation (every 2s, max \(maxTapRetries) attempts)...")
+        accessibilityPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            if AXIsProcessTrusted() {
-                print("[HotkeyManager] ✅ Accessibility permission granted, retrying event tap...")
+            self.tapRetryCount += 1
+            print("[HotkeyManager] 🔄 Retry \(self.tapRetryCount)/\(self.maxTapRetries) to create event tap...")
+
+            if self.tryCreateEventTap() {
+                print("[HotkeyManager] ✅ Event tap created on retry \(self.tapRetryCount)")
                 self.accessibilityPollTimer?.invalidate()
                 self.accessibilityPollTimer = nil
-                self.start()
+                self.tapRetryCount = 0
+                return
+            }
+
+            if self.tapRetryCount >= self.maxTapRetries {
+                print("[HotkeyManager] ❌ Giving up after \(self.maxTapRetries) retries. Please remove and re-grant Accessibility permission, then restart the app.")
+                self.accessibilityPollTimer?.invalidate()
+                self.accessibilityPollTimer = nil
             }
         }
     }
