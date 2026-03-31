@@ -7,16 +7,12 @@ echo "🔨 Building..."
 xcodebuild -project doubao-murmur.xcodeproj \
   -scheme doubao-murmur \
   -configuration Debug \
-  build \
+  -derivedDataPath build \
   CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION=YES \
+  build \
   2>&1 | grep -E '(error:|warning:|BUILD SUCCEEDED|BUILD FAILED)'
 
-APP_PATH=$(xcodebuild -project doubao-murmur.xcodeproj \
-  -scheme doubao-murmur \
-  -configuration Debug \
-  -showBuildSettings 2>/dev/null \
-  | grep -m1 'BUILT_PRODUCTS_DIR' | awk '{print $3}')
-APP="$APP_PATH/Doubao Murmur.app"
+APP="build/Build/Products/Debug/Doubao Murmur.app"
 
 # Kill existing instance
 pkill -x "Doubao Murmur" 2>/dev/null || true

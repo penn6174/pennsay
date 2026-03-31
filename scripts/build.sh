@@ -7,8 +7,9 @@ echo "🔨 Building doubao-murmur..."
 xcodebuild -project doubao-murmur.xcodeproj \
   -scheme doubao-murmur \
   -configuration Debug \
-  build \
+  -derivedDataPath build \
   CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION=YES \
+  build \
   2>&1 | grep -E '(error:|warning:|BUILD SUCCEEDED|BUILD FAILED|CompileSwift|Linking)'
 
 echo ""

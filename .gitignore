@@ -3,6 +3,8 @@ doubao-murmur.xcodeproj/
 xcuserdata/
 *.xcworkspace
 DerivedData/
+
+# Build output
 build/
 *.pbxuser
 *.mode1v3

@@ -3,12 +3,7 @@
 set -e
 cd "$(dirname "$0")/.."
 
-APP_PATH=$(xcodebuild -project doubao-murmur.xcodeproj \
-  -scheme doubao-murmur \
-  -configuration Debug \
-  -showBuildSettings 2>/dev/null \
-  | grep -m1 'BUILT_PRODUCTS_DIR' | awk '{print $3}')
-APP="$APP_PATH/Doubao Murmur.app"
+APP="build/Build/Products/Debug/Doubao Murmur.app"
 
 # Kill existing instance
 pkill -x "Doubao Murmur" 2>/dev/null || true
