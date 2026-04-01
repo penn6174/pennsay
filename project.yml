@@ -9,7 +9,7 @@ options:
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: com.doubao.murmur
-    MARKETING_VERSION: "1.1.0"
+    MARKETING_VERSION: "1.2.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     MACOSX_DEPLOYMENT_TARGET: "13.0"
@@ -41,6 +41,8 @@ targets:
         CFBundleName: "Doubao Murmur"
         CFBundleDisplayName: "Doubao Murmur"
         CFBundleIconFile: "AppIcon"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
     entitlements:
       path: doubao-murmur/doubao-murmur.entitlements
       properties:
