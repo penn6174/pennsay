@@ -13,6 +13,9 @@ class TranscriptionManager {
     /// Whether the current WSS connection is using cached (file-based) params.
     private var usingCachedParams = false
 
+    /// True after stopRecording(): the next `onResult` triggers completion immediately.
+    private var awaitingFinalResult = false
+
     /// Called when auth has expired and user needs to re-login.
     var onAuthExpired: (() -> Void)?
 
@@ -61,12 +64,17 @@ class TranscriptionManager {
                 if self.appState.recordingState == .starting {
                     self.appState.recordingState = .recording
                 }
+                if self.awaitingFinalResult {
+                    self.awaitingFinalResult = false
+                    self.completeTranscription()
+                }
             }
         }
 
         asrClient.onFinish = { [weak self] in
             Task { @MainActor in
                 guard let self = self else { return }
+                self.awaitingFinalResult = false
                 if self.appState.recordingState == .stopping || self.appState.recordingState == .recording {
                     self.completeTranscription()
                 }
@@ -182,8 +190,16 @@ class TranscriptionManager {
         print("[TranscriptionManager] ⏹ Stopping recording...")
         appState.recordingState = .stopping
         audioCapture.stopCapture()
-        asrClient.disconnect()
-        completeTranscription()
+        asrClient.finishSending()
+        awaitingFinalResult = true
+
+        // Safety timeout: if no result or finish arrives within 1 second, complete with current text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self, self.appState.recordingState == .stopping else { return }
+            print("[TranscriptionManager] ⏱ Safety timeout, completing with current text")
+            self.awaitingFinalResult = false
+            self.completeTranscription()
+        }
     }
 
     // MARK: - Auth Failure
@@ -205,6 +221,7 @@ class TranscriptionManager {
 
     private func handleCancel() {
         guard appState.recordingState != .idle else { return }
+        awaitingFinalResult = false
         audioCapture.stopCapture()
         asrClient.disconnect()
         resetToIdle()
@@ -225,6 +242,7 @@ class TranscriptionManager {
 
     private func resetToIdle() {
         print("[TranscriptionManager] Resetting to idle")
+        awaitingFinalResult = false
         audioCapture.stopCapture()
         asrClient.disconnect()
         appState.recordingState = .idle

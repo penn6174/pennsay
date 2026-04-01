@@ -123,6 +123,16 @@ class DoubaoASRClient {
         }
     }
 
+    /// Signal that no more audio will be sent, but keep the WebSocket open
+    /// to receive the final transcription results (finish event) from the server.
+    func finishSending() {
+        bufferLock.lock()
+        pendingAudioBuffer.removeAll()
+        bufferLock.unlock()
+        isConnected = false
+        print("[DoubaoASRClient] Finished sending audio, waiting for server response")
+    }
+
     func disconnect() {
         guard webSocketTask != nil else { return }
         isConnected = false
