@@ -3,6 +3,9 @@ import SwiftUI
 
 class OverlayPanel: NSPanel {
     private let appState: AppState
+    var onCancel: (() -> Void)?
+
+    override var canBecomeKey: Bool { true }
 
     init(appState: AppState) {
         self.appState = appState
@@ -47,11 +50,22 @@ class OverlayPanel: NSPanel {
             setFrame(frame, display: true)
         }
         orderFrontRegardless()
-        print("[OverlayPanel] ✅ Overlay is now visible (isVisible=\(isVisible))")
+        makeKey()
+        print("[OverlayPanel] ✅ Overlay is now visible (isVisible=\(isVisible), isKeyWindow=\(isKeyWindow))")
     }
 
     func hideOverlay() {
         print("[OverlayPanel] hideOverlay called")
+        resignKey()
         orderOut(nil)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // ESC
+            print("[OverlayPanel] ESC key received via keyDown")
+            onCancel?()
+        } else {
+            super.keyDown(with: event)
+        }
     }
 }

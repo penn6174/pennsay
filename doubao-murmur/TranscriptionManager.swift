@@ -1,5 +1,8 @@
 import Foundation
 import Combine
+import os
+
+private let tmLogger = Logger(subsystem: "com.doubao.murmur", category: "TranscriptionManager")
 
 @MainActor
 class TranscriptionManager {
@@ -34,7 +37,7 @@ class TranscriptionManager {
     func start() {
         // Wire up hotkey events
         hotkeyManager.onHotkeyEvent = { [weak self] event in
-            print("[TranscriptionManager] Received hotkey event: \(event)")
+            tmLogger.notice("Received hotkey event: \(String(describing: event))")
             Task { @MainActor in
                 guard let self = self else { return }
                 switch event {
@@ -110,6 +113,13 @@ class TranscriptionManager {
         // Pipe captured audio directly to the ASR client
         audioCapture.onAudioData = { [weak self] data in
             self?.asrClient.sendAudio(data)
+        }
+
+        // Wire up overlay panel ESC key (works even with Secure Keyboard Entry)
+        overlayPanel.onCancel = { [weak self] in
+            Task { @MainActor in
+                self?.handleCancel()
+            }
         }
 
         hotkeyManager.start()
@@ -220,7 +230,12 @@ class TranscriptionManager {
     // MARK: - Cancel
 
     private func handleCancel() {
-        guard appState.recordingState != .idle else { return }
+        tmLogger.notice("handleCancel called, current state: \(String(describing: self.appState.recordingState))")
+        guard appState.recordingState != .idle else {
+            tmLogger.warning("Cancel ignored: already idle")
+            return
+        }
+        tmLogger.notice("Cancelling transcription...")
         awaitingFinalResult = false
         audioCapture.stopCapture()
         asrClient.disconnect()

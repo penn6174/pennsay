@@ -1,5 +1,8 @@
 import Foundation
 import Cocoa
+import os
+
+private let logger = Logger(subsystem: "com.doubao.murmur", category: "HotkeyManager")
 
 class HotkeyManager {
     enum HotkeyEvent {
@@ -110,7 +113,7 @@ class HotkeyManager {
     fileprivate func handleEvent(_ proxy: CGEventTapProxy, _ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             // Re-enable the tap
-            print("[HotkeyManager] ⚠️ Event tap was disabled (type=\(type.rawValue)), re-enabling...")
+            logger.warning("Event tap was disabled (type=\(type.rawValue)), re-enabling...")
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
@@ -131,6 +134,7 @@ class HotkeyManager {
 
             // ESC key
             if keyCode == 53 {
+                logger.notice("ESC pressed (keyCode=53, handler set: \(self.onHotkeyEvent != nil))")
                 onHotkeyEvent?(.cancel)
                 return nil // Consume ESC when we handle it
             }
