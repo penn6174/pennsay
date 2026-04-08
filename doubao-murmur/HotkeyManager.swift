@@ -21,6 +21,7 @@ class HotkeyManager {
     private var otherKeyPressed = false
     private var lastToggleTime: TimeInterval = 0
     private let debounceInterval: TimeInterval = 0.3
+    private var shouldConsumeEscape = false
 
     init() {
         requestAccessibilityPermission()
@@ -102,6 +103,11 @@ class HotkeyManager {
         runLoopSource = nil
     }
 
+    func setEscapeHandlingEnabled(_ isEnabled: Bool) {
+        shouldConsumeEscape = isEnabled
+        logger.notice("ESC handling enabled: \(isEnabled)")
+    }
+
     private func requestAccessibilityPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(options)
@@ -134,7 +140,12 @@ class HotkeyManager {
 
             // ESC key
             if keyCode == 53 {
-                logger.notice("ESC pressed (keyCode=53, handler set: \(self.onHotkeyEvent != nil))")
+                logger.notice(
+                    "ESC pressed (keyCode=53, handler set: \(self.onHotkeyEvent != nil), shouldConsume: \(self.shouldConsumeEscape))"
+                )
+                guard shouldConsumeEscape else {
+                    return Unmanaged.passRetained(event)
+                }
                 onHotkeyEvent?(.cancel)
                 return nil // Consume ESC when we handle it
             }

@@ -48,6 +48,7 @@ class TranscriptionManager {
                 }
             }
         }
+        hotkeyManager.setEscapeHandlingEnabled(false)
 
         // Wire up native ASR client callbacks
         asrClient.onOpen = { [weak self] in
@@ -55,7 +56,7 @@ class TranscriptionManager {
                 guard let self = self else { return }
                 print("[TranscriptionManager] ASR WebSocket opened, buffered audio flushed")
                 guard self.appState.recordingState == .starting else { return }
-                self.appState.recordingState = .recording
+                self.setRecordingState(.recording)
                 // Audio capture is already running; buffered data was flushed by ASR client.
             }
         }
@@ -65,7 +66,7 @@ class TranscriptionManager {
                 guard let self = self else { return }
                 self.appState.transcriptionText = text
                 if self.appState.recordingState == .starting {
-                    self.appState.recordingState = .recording
+                    self.setRecordingState(.recording)
                 }
                 if self.awaitingFinalResult {
                     self.awaitingFinalResult = false
@@ -148,7 +149,7 @@ class TranscriptionManager {
         }
 
         print("[TranscriptionManager] 🎤 Starting recording...")
-        appState.recordingState = .starting
+        setRecordingState(.starting)
         appState.transcriptionText = ""
         appState.errorMessage = nil
         overlayPanel.showOverlay()
@@ -198,7 +199,7 @@ class TranscriptionManager {
 
     private func stopRecording() {
         print("[TranscriptionManager] ⏹ Stopping recording...")
-        appState.recordingState = .stopping
+        setRecordingState(.stopping)
         audioCapture.stopCapture()
         asrClient.finishSending()
         awaitingFinalResult = true
@@ -260,7 +261,7 @@ class TranscriptionManager {
         awaitingFinalResult = false
         audioCapture.stopCapture()
         asrClient.disconnect()
-        appState.recordingState = .idle
+        setRecordingState(.idle)
         appState.showOverlay = false
         appState.errorMessage = nil
         overlayPanel.hideOverlay()
@@ -270,5 +271,10 @@ class TranscriptionManager {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.appState.transcriptionText = ""
         }
+    }
+
+    private func setRecordingState(_ newState: RecordingState) {
+        appState.recordingState = newState
+        hotkeyManager.setEscapeHandlingEnabled(newState != .idle)
     }
 }
