@@ -1,0 +1,7 @@
+PASS 菜单栏图标显示已登录
+PASS 模拟按 Right Option 悬浮窗出现
+PASS ASR partial 流式更新
+PASS 再次按 Right Option 粘贴到 TextEdit
+PASS ESC 取消不污染剪贴板
+PASS 凭证过期自动提示为未登录
+PASS 日志写入 Library/Logs/DoubaoMurmur

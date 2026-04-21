@@ -2,25 +2,29 @@ import Foundation
 import AppKit
 
 struct PasteHelper {
-    static func copyAndPaste(_ text: String) {
+    static func copyAndPaste(_ text: String, targetApplication: NSRunningApplication?) {
         guard !text.isEmpty else { return }
 
-        // Copy to clipboard
         let pasteboard = NSPasteboard.general
+        let existingItems = pasteboard.pasteboardItems?.map { item in
+            item.types.reduce(into: [NSPasteboard.PasteboardType: Data]()) { partial, type in
+                partial[type] = item.data(forType: type)
+            }
+        } ?? []
+
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // Short delay then simulate ⌘V
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            simulatePaste()
+        if let targetApplication {
+            targetApplication.activate(options: [.activateAllWindows])
         }
-    }
 
-    static func copyOnly(_ text: String) {
-        guard !text.isEmpty else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            simulatePaste()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                restorePasteboard(items: existingItems)
+            }
+        }
     }
 
     private static func simulatePaste() {
@@ -36,5 +40,19 @@ struct PasteHelper {
 
         keyDown?.post(tap: .cghidEventTap)
         keyUp?.post(tap: .cghidEventTap)
+    }
+
+    private static func restorePasteboard(items: [[NSPasteboard.PasteboardType: Data]]) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard !items.isEmpty else { return }
+        let pasteboardItems: [NSPasteboardItem] = items.map { itemData in
+            let item = NSPasteboardItem()
+            for (type, data) in itemData {
+                item.setData(data, forType: type)
+            }
+            return item
+        }
+        pasteboard.writeObjects(pasteboardItems)
     }
 }

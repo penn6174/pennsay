@@ -1,25 +1,26 @@
-name: doubao-murmur
+name: VoiceInput
 options:
-  bundleIdPrefix: com.doubao
+  bundleIdPrefix: com.voiceinput
   deploymentTarget:
-    macOS: "13.0"
+    macOS: "14.0"
   xcodeVersion: "15.4"
   generateEmptyDirectories: true
 
 settings:
   base:
-    PRODUCT_BUNDLE_IDENTIFIER: com.doubao.murmur
-    MARKETING_VERSION: "1.2.0"
+    PRODUCT_BUNDLE_IDENTIFIER: com.voiceinput.app
+    MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
-    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 targets:
-  doubao-murmur:
+  VoiceInput:
     type: application
     platform: macOS
     sources:
       - path: doubao-murmur
+      - path: Sources/VoiceInputCore
         excludes:
           - "*.md"
     settings:
@@ -28,7 +29,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: doubao-murmur/doubao-murmur.entitlements
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
-        PRODUCT_NAME: "Doubao Murmur"
+        PRODUCT_NAME: "VoiceInput"
         COMBINE_HIDPI_IMAGES: true
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
         LD_RUNPATH_SEARCH_PATHS:
@@ -37,9 +38,9 @@ targets:
       path: doubao-murmur/Info.plist
       properties:
         LSUIElement: true
-        NSMicrophoneUsageDescription: "Doubao Murmur needs microphone access to enable voice-to-text transcription."
-        CFBundleName: "Doubao Murmur"
-        CFBundleDisplayName: "Doubao Murmur"
+        NSMicrophoneUsageDescription: "VoiceInput needs microphone access to capture speech for transcription."
+        CFBundleName: "VoiceInput"
+        CFBundleDisplayName: "VoiceInput"
         CFBundleIconFile: "AppIcon"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"

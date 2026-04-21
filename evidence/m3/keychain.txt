@@ -1,0 +1,20 @@
+keychain: "/Users/penntiao/Library/Keychains/login.keychain-db"
+version: 512
+class: "genp"
+attributes:
+    0x00000007 <blob>="DoubaoMurmur"
+    0x00000008 <blob>=<NULL>
+    "acct"<blob>="VoiceInputLLMAPIKey"
+    "cdat"<timedate>=0x32303236303432313138323534375A00  "20260421182547Z\000"
+    "crtr"<uint32>=<NULL>
+    "cusi"<sint32>=<NULL>
+    "desc"<blob>=<NULL>
+    "gena"<blob>=<NULL>
+    "icmt"<blob>=<NULL>
+    "invi"<sint32>=<NULL>
+    "mdat"<timedate>=0x32303236303432313138323534375A00  "20260421182547Z\000"
+    "nega"<sint32>=<NULL>
+    "prot"<blob>=<NULL>
+    "scrp"<sint32>=<NULL>
+    "svce"<blob>="DoubaoMurmur"
+    "type"<uint32>=<NULL>

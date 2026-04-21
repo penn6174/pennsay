@@ -1,0 +1,10 @@
+PASS Settings 三栏布局截图
+PASS LLM 字段写入并重启读回
+PASS System Prompt 清空自定义后可重置默认
+PASS API Key 存 Keychain
+PASS 启用 LLM 三阶段截图
+PASS 禁用 LLM 行为与 M1 一致
+PASS 断网测试失败回退原文并通知
+PASS Timeout=1s 触发兜底原文
+PASS 清空 API Key 后 Toggle 灰显
+PASS 日志完整请求响应链路

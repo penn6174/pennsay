@@ -1,4 +1,4 @@
-name: Release macOS App
+name: Release VoiceInput
 
 on:
   push:
@@ -15,8 +15,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install dependencies
+        run: brew install xcodegen create-dmg
 
       - name: Generate Xcode project
         run: xcodegen generate
@@ -24,29 +24,23 @@ jobs:
       - name: Extract version from tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          echo "APP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "VOICEINPUT_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "VOICEINPUT_BUILD_NUMBER=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
 
-      - name: Build
-        run: |
-          xcodebuild -project doubao-murmur.xcodeproj \
-            -scheme doubao-murmur \
-            -configuration Release \
-            -derivedDataPath build \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION=YES \
-            MARKETING_VERSION="$APP_VERSION" \
-            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
-            build
+      - name: Build release artifacts
+        run: make release
 
-      - name: Package app
-        run: |
-          APP_PATH="build/Build/Products/Release/Doubao Murmur.app"
-          cd "$(dirname "$APP_PATH")"
-          zip -r -y "Doubao-Murmur-${GITHUB_REF_NAME}.zip" "Doubao Murmur.app"
-          echo "ARTIFACT_PATH=$(pwd)/Doubao-Murmur-${GITHUB_REF_NAME}.zip" >> "$GITHUB_ENV"
+      - name: Upload versioned app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceInput-app-bundle
+          path: build/VoiceInput-v${{ env.VOICEINPUT_VERSION }}.app
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: ${{ env.ARTIFACT_PATH }}
+          files: |
+            build/VoiceInput-v${{ env.VOICEINPUT_VERSION }}.zip
+            build/VoiceInput-v${{ env.VOICEINPUT_VERSION }}.dmg
+            build/VoiceInput-v${{ env.VOICEINPUT_VERSION }}.sha256

@@ -1,0 +1,11 @@
+-rw-r--r--@ 1 penntiao  staff  580921 Apr 22 02:55 build/VoiceInput-v1.0.0.dmg
+-rw-r--r--@ 1 penntiao  staff     348 Apr 22 02:55 build/VoiceInput-v1.0.0.sha256
+-rw-r--r--@ 1 penntiao  staff  576088 Apr 22 02:55 build/VoiceInput-v1.0.0.zip
+
+build/VoiceInput-v1.0.0.app:
+total 0
+drwxr-xr-x@ 6 penntiao  staff  192 Apr 22 02:55 Contents
+
+01ce7745ae2f8519a657ce3bc528c7037534955ca128730ee97ca96bc86141a8  VoiceInput-v1.0.0.app
+18e55264d5cd2c0aba013b30e4db6ea8a76d2a33e62fad27518a9bbae61438bd  /Users/penntiao/Desktop/voice-input/build/VoiceInput-v1.0.0.zip
+9d6043ba1e641790600203cf042b63376e9c9d77cb613ca02b3d5605cbc1ee67  /Users/penntiao/Desktop/voice-input/build/VoiceInput-v1.0.0.dmg

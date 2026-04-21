@@ -12,6 +12,7 @@ enum RecordingState {
     case starting
     case recording
     case stopping
+    case refining
 }
 
 @MainActor
@@ -20,18 +21,21 @@ class AppState: ObservableObject {
 
     @Published var loginStatus: LoginStatus = .checking
     @Published var recordingState: RecordingState = .idle
-    @Published var transcriptionText: String = ""
-    @Published var showOverlay: Bool = false
-    @Published var errorMessage: String?
+    @Published var currentText: String = ""
+    @Published var lastNotification: String?
 
     var isRecording: Bool {
-        recordingState == .recording || recordingState == .starting
+        switch recordingState {
+        case .starting, .recording, .stopping, .refining:
+            return true
+        case .idle:
+            return false
+        }
     }
 
     func reset() {
         recordingState = .idle
-        transcriptionText = ""
-        showOverlay = false
-        errorMessage = nil
+        currentText = ""
+        lastNotification = nil
     }
 }

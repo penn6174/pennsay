@@ -1,0 +1,6 @@
+[PASS] make release 产出 `.app` / `.zip` / `.dmg` / `.sha256`
+[PASS] `.dmg` 挂载并截图，见 `dmg-mounted.png`
+[PASS] GitHub Actions 语法检查通过，见 `actionlint.txt`
+[PASS] 检查更新 mock 覆盖新版 / 已最新 / 失败三种响应，见 `update-new.txt` / `update-same.txt` / `update-failure.txt`
+[FAIL] 卸载并退出后按字面执行 `find ~/Library -iname "*doubaomurmur*" -o -iname "voiceinput*"` 仍命中一个预存的 iCloud Trash 文件，见 `uninstall-find.txt`
+[PASS] README 卸载清单覆盖 `/Applications/VoiceInput.app`、App Support、Preferences、Logs、Keychain，见 `readme-uninstall-grep.txt`

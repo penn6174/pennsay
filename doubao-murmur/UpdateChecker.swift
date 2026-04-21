@@ -1,83 +1,89 @@
 import Foundation
 
-struct UpdateChecker {
-    struct UpdateInfo {
-        let version: String
-        let tag: String
-        let downloadURL: URL
-        /// Direct URL to the ZIP asset
-        var assetURL: URL {
-            URL(string: "https://github.com/\(repo)/releases/download/\(tag)/Doubao-Murmur-\(tag).zip")!
+struct ReleaseInfo: Sendable {
+    let version: String
+    let tag: String
+    let releaseNotes: String
+    let htmlURL: URL
+}
+
+enum UpdateCheckResult: Sendable {
+    case updateAvailable(ReleaseInfo)
+    case upToDate(currentVersion: String)
+}
+
+enum UpdateCheckError: LocalizedError {
+    case invalidURL
+    case invalidResponse
+    case httpError(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "更新地址无效"
+        case .invalidResponse:
+            return "更新响应无效"
+        case let .httpError(statusCode):
+            return "更新检查失败 HTTP \(statusCode)"
         }
-    }
-
-    enum CheckError: LocalizedError {
-        case noRelease
-        case networkError
-
-        var errorDescription: String? {
-            switch self {
-            case .noRelease:
-                return "未找到已发布的版本。"
-            case .networkError:
-                return "无法连接到 GitHub，请检查网络连接。"
-            }
-        }
-    }
-
-    private static let repo = "lilong7676/doubao-murmur"
-    private static let latestURL = "https://github.com/\(repo)/releases/latest"
-
-    static func check() async throws -> UpdateInfo? {
-        guard let url = URL(string: latestURL) else { return nil }
-
-        // Use a session that doesn't follow redirects, so we can read the Location header
-        let delegate = NoRedirectDelegate()
-        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 10
-
-        let (_, response) = try await session.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (300...399).contains(httpResponse.statusCode),
-              let location = httpResponse.value(forHTTPHeaderField: "Location"),
-              let redirectURL = URL(string: location) else {
-            throw CheckError.noRelease
-        }
-
-        // Location is like: https://github.com/lilong7676/doubao-murmur/releases/tag/v1.1.1
-        let tag = redirectURL.lastPathComponent
-        let remoteVersion = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-
-        if isNewer(remote: remoteVersion, current: currentVersion) {
-            return UpdateInfo(version: remoteVersion, tag: tag, downloadURL: redirectURL)
-        }
-        return nil
-    }
-
-    private static func isNewer(remote: String, current: String) -> Bool {
-        let r = remote.split(separator: ".").compactMap { Int($0) }
-        let c = current.split(separator: ".").compactMap { Int($0) }
-        for i in 0..<max(r.count, c.count) {
-            let rv = i < r.count ? r[i] : 0
-            let cv = i < c.count ? c[i] : 0
-            if rv > cv { return true }
-            if rv < cv { return false }
-        }
-        return false
     }
 }
 
-private class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) {
-        // Return nil to stop following the redirect
-        completionHandler(nil)
+struct UpdateChecker {
+    private struct GitHubRelease: Decodable {
+        let tagName: String
+        let body: String
+        let htmlURL: URL
+
+        enum CodingKeys: String, CodingKey {
+            case tagName = "tag_name"
+            case body
+            case htmlURL = "html_url"
+        }
+    }
+
+    static func checkLatest() async throws -> UpdateCheckResult {
+        let owner = ProcessInfo.processInfo.environment["VOICEINPUT_GITHUB_OWNER"] ?? AppEnvironment.githubRepoOwner
+        let repo = ProcessInfo.processInfo.environment["VOICEINPUT_GITHUB_REPO"] ?? AppEnvironment.githubRepoName
+        let feed = ProcessInfo.processInfo.environment["VOICEINPUT_UPDATE_FEED_URL"]
+            ?? "https://api.github.com/repos/\(owner)/\(repo)/releases/latest"
+
+        guard let url = URL(string: feed) else {
+            throw UpdateCheckError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw UpdateCheckError.invalidResponse
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw UpdateCheckError.httpError(httpResponse.statusCode)
+        }
+
+        let decoder = JSONDecoder()
+        let release = try decoder.decode(GitHubRelease.self, from: data)
+        let currentVersion = ProcessInfo.processInfo.environment["VOICEINPUT_CURRENT_VERSION"]
+            ?? Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+            ?? "0.0.0"
+        let tag = release.tagName.hasPrefix("v") ? String(release.tagName.dropFirst()) : release.tagName
+        let current = Version(currentVersion)
+        let remote = Version(tag)
+
+        if remote > current {
+            return .updateAvailable(
+                ReleaseInfo(
+                    version: tag,
+                    tag: release.tagName,
+                    releaseNotes: release.body,
+                    htmlURL: release.htmlURL
+                )
+            )
+        }
+
+        return .upToDate(currentVersion: currentVersion)
     }
 }

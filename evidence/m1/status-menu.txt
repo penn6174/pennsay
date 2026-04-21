@@ -1,0 +1,1 @@
+状态: 已登录, missing value, 设置..., 打开日志文件夹, 检查更新, 卸载并退出, missing value, 退出

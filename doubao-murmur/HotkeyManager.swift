@@ -1,50 +1,223 @@
-import Foundation
 import Cocoa
-import os
 
-private let logger = Logger(subsystem: "com.doubao.murmur", category: "HotkeyManager")
-
-class HotkeyManager {
+final class HotkeyManager {
     enum HotkeyEvent {
+        case startRecording
+        case stopRecording
         case toggleRecording
         case cancel
     }
 
     var onHotkeyEvent: ((HotkeyEvent) -> Void)?
 
+    private let log = AppLog(category: "Hotkey")
+    private var configuration: ShortcutConfiguration
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var accessibilityPollTimer: Timer?
     private var tapRetryCount = 0
     private let maxTapRetries = 30
-    private var rightOptionDown = false
-    private var otherKeyPressed = false
-    private var lastToggleTime: TimeInterval = 0
-    private let debounceInterval: TimeInterval = 0.3
     private var shouldConsumeEscape = false
 
-    init() {
+    private var triggerKeyIsDown = false
+    private var triggerPressStartTime: TimeInterval = 0
+    private var holdStarted = false
+    private var pendingHoldStart: DispatchWorkItem?
+    private var otherKeyPressedWhileDown = false
+    private var waitingForSecondTap = false
+    private var secondTapTimeoutWorkItem: DispatchWorkItem?
+
+    init(configuration: ShortcutConfiguration) {
+        self.configuration = configuration
         requestAccessibilityPermission()
     }
 
     func start() {
-        let trusted = AXIsProcessTrusted()
-        print("[HotkeyManager] Accessibility trusted: \(trusted)")
-
         if tryCreateEventTap() {
             tapRetryCount = 0
             return
         }
 
-        print("[HotkeyManager] ❌ Failed to create event tap. Accessibility permission may be needed.")
-        if !trusted {
-            requestAccessibilityPermission()
-        }
+        requestAccessibilityPermission()
         startPollingForEventTap()
     }
 
+    func stop() {
+        accessibilityPollTimer?.invalidate()
+        accessibilityPollTimer = nil
+        secondTapTimeoutWorkItem?.cancel()
+        pendingHoldStart?.cancel()
+
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+        }
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        eventTap = nil
+        runLoopSource = nil
+    }
+
+    func updateConfiguration(_ configuration: ShortcutConfiguration) {
+        log.notice("shortcut updated key=\(configuration.triggerKey.rawValue) mode=\(configuration.mode.rawValue) doubleTap=\(configuration.doubleTapWindowMs)")
+        self.configuration = configuration
+        cancelTransientState()
+    }
+
+    func setEscapeHandlingEnabled(_ isEnabled: Bool) {
+        shouldConsumeEscape = isEnabled
+    }
+
+    fileprivate func handleEvent(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let eventTap {
+                CGEvent.tapEnable(tap: eventTap, enable: true)
+            }
+            return Unmanaged.passRetained(event)
+        }
+
+        switch type {
+        case .flagsChanged:
+            return handleFlagsChanged(event)
+        case .keyDown:
+            return handleKeyDown(event)
+        default:
+            return Unmanaged.passRetained(event)
+        }
+    }
+
+    private func handleKeyDown(_ event: CGEvent) -> Unmanaged<CGEvent>? {
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        if keyCode == 53 {
+            guard shouldConsumeEscape else {
+                return Unmanaged.passRetained(event)
+            }
+            onHotkeyEvent?(.cancel)
+            return nil
+        }
+
+        if waitingForSecondTap, keyCode != configuration.triggerKey.keyCode {
+            waitingForSecondTap = false
+            secondTapTimeoutWorkItem?.cancel()
+            log.notice("double tap cancelled by keyCode=\(keyCode)")
+        }
+
+        if triggerKeyIsDown, keyCode != configuration.triggerKey.keyCode {
+            otherKeyPressedWhileDown = true
+        }
+
+        return Unmanaged.passRetained(event)
+    }
+
+    private func handleFlagsChanged(_ event: CGEvent) -> Unmanaged<CGEvent>? {
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        guard keyCode == configuration.triggerKey.keyCode else {
+            return Unmanaged.passRetained(event)
+        }
+
+        let isDown = keyIsDown(for: configuration.triggerKey, flags: event.flags)
+        let timestamp = ProcessInfo.processInfo.systemUptime
+
+        if isDown {
+            handleTriggerDown(at: timestamp)
+        } else {
+            handleTriggerUp(at: timestamp)
+        }
+
+        return Unmanaged.passRetained(event)
+    }
+
+    private func handleTriggerDown(at timestamp: TimeInterval) {
+        guard !triggerKeyIsDown else { return }
+        triggerKeyIsDown = true
+        triggerPressStartTime = timestamp
+        otherKeyPressedWhileDown = false
+        log.notice("trigger down key=\(configuration.triggerKey.rawValue) mode=\(configuration.mode.rawValue)")
+
+        switch configuration.mode {
+        case .hold:
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self, self.triggerKeyIsDown else { return }
+                self.holdStarted = true
+                self.onHotkeyEvent?(.startRecording)
+            }
+            pendingHoldStart = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(80), execute: workItem)
+        case .singleTapToggle, .doubleTapToggle:
+            break
+        }
+    }
+
+    private func handleTriggerUp(at timestamp: TimeInterval) {
+        guard triggerKeyIsDown else { return }
+        triggerKeyIsDown = false
+        pendingHoldStart?.cancel()
+        pendingHoldStart = nil
+
+        let pressDuration = timestamp - triggerPressStartTime
+        log.notice("trigger up mode=\(configuration.mode.rawValue) duration=\(pressDuration) waitingSecondTap=\(waitingForSecondTap)")
+        defer {
+            holdStarted = false
+        }
+
+        switch configuration.mode {
+        case .hold:
+            if holdStarted {
+                onHotkeyEvent?(.stopRecording)
+            } else if pressDuration < 0.08 {
+                log.notice("hold ignored as accidental press duration=\(pressDuration)")
+            }
+        case .singleTapToggle:
+            guard !otherKeyPressedWhileDown else { return }
+            onHotkeyEvent?(.toggleRecording)
+        case .doubleTapToggle:
+            guard !otherKeyPressedWhileDown else { return }
+            if waitingForSecondTap {
+                waitingForSecondTap = false
+                secondTapTimeoutWorkItem?.cancel()
+                secondTapTimeoutWorkItem = nil
+                log.notice("double tap recognized")
+                onHotkeyEvent?(.toggleRecording)
+            } else {
+                waitingForSecondTap = true
+                log.notice("double tap armed window=\(configuration.doubleTapWindowMs)")
+                let timeout = DispatchWorkItem { [weak self] in
+                    self?.log.notice("double tap window expired")
+                    self?.waitingForSecondTap = false
+                }
+                secondTapTimeoutWorkItem = timeout
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + .milliseconds(configuration.doubleTapWindowMs),
+                    execute: timeout
+                )
+            }
+        }
+    }
+
+    private func keyIsDown(for triggerKey: ShortcutTriggerKey, flags: CGEventFlags) -> Bool {
+        switch triggerKey {
+        case .rightOption, .leftOption:
+            return flags.contains(.maskAlternate)
+        case .rightCommand, .leftCommand:
+            return flags.contains(.maskCommand)
+        case .rightControl:
+            return flags.contains(.maskControl)
+        case .capsLock:
+            return flags.contains(.maskAlphaShift)
+        case .function:
+            return flags.contains(.maskSecondaryFn)
+        }
+    }
+
+    private func requestAccessibilityPermission() {
+        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+    }
+
     private func tryCreateEventTap() -> Bool {
-        let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+        let eventMask: CGEventMask =
+            (1 << CGEventType.flagsChanged.rawValue) |
+            (1 << CGEventType.keyDown.rawValue)
 
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -61,147 +234,40 @@ class HotkeyManager {
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
-        print("[HotkeyManager] ✅ Event tap started successfully")
         return true
     }
 
     private func startPollingForEventTap() {
         accessibilityPollTimer?.invalidate()
         tapRetryCount = 0
-        print("[HotkeyManager] ⏳ Polling for event tap creation (every 2s, max \(maxTapRetries) attempts)...")
-        accessibilityPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
+        accessibilityPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+            guard let self else { return }
             self.tapRetryCount += 1
-            print("[HotkeyManager] 🔄 Retry \(self.tapRetryCount)/\(self.maxTapRetries) to create event tap...")
-
-            if self.tryCreateEventTap() {
-                print("[HotkeyManager] ✅ Event tap created on retry \(self.tapRetryCount)")
-                self.accessibilityPollTimer?.invalidate()
-                self.accessibilityPollTimer = nil
-                self.tapRetryCount = 0
-                return
-            }
-
-            if self.tapRetryCount >= self.maxTapRetries {
-                print("[HotkeyManager] ❌ Giving up after \(self.maxTapRetries) retries. Please remove and re-grant Accessibility permission, then restart the app.")
-                self.accessibilityPollTimer?.invalidate()
-                self.accessibilityPollTimer = nil
+            if self.tryCreateEventTap() || self.tapRetryCount >= self.maxTapRetries {
+                timer.invalidate()
             }
         }
     }
 
-    func stop() {
-        accessibilityPollTimer?.invalidate()
-        accessibilityPollTimer = nil
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-        }
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-        }
-        eventTap = nil
-        runLoopSource = nil
-    }
-
-    func setEscapeHandlingEnabled(_ isEnabled: Bool) {
-        shouldConsumeEscape = isEnabled
-        logger.notice("ESC handling enabled: \(isEnabled)")
-    }
-
-    private func requestAccessibilityPermission() {
-        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true] as CFDictionary
-        let trusted = AXIsProcessTrustedWithOptions(options)
-        if !trusted {
-            print("[HotkeyManager] Accessibility permission not granted. Please enable it in System Settings > Privacy & Security > Accessibility.")
-        }
-    }
-
-    fileprivate func handleEvent(_ proxy: CGEventTapProxy, _ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            // Re-enable the tap
-            logger.warning("Event tap was disabled (type=\(type.rawValue)), re-enabling...")
-            if let tap = eventTap {
-                CGEvent.tapEnable(tap: tap, enable: true)
-            }
-            return Unmanaged.passRetained(event)
-        }
-
-        if type == .flagsChanged {
-            return handleFlagsChanged(event)
-        }
-
-        if type == .keyDown {
-            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-
-            // Track that another key was pressed while right option is down
-            if rightOptionDown {
-                otherKeyPressed = true
-            }
-
-            // ESC key
-            if keyCode == 53 {
-                logger.notice(
-                    "ESC pressed (keyCode=53, handler set: \(self.onHotkeyEvent != nil), shouldConsume: \(self.shouldConsumeEscape))"
-                )
-                guard shouldConsumeEscape else {
-                    return Unmanaged.passRetained(event)
-                }
-                onHotkeyEvent?(.cancel)
-                return nil // Consume ESC when we handle it
-            }
-        }
-
-        return Unmanaged.passRetained(event)
-    }
-
-    private func handleFlagsChanged(_ event: CGEvent) -> Unmanaged<CGEvent>? {
-        let flags = event.flags
-        let keycode = event.getIntegerValueField(.keyboardEventKeycode)
-
-        // Right Option key: keycode 61
-        let isRightOption = keycode == 61
-
-        if isRightOption {
-            let isOptionDown = flags.contains(.maskAlternate)
-
-            if isOptionDown && !rightOptionDown {
-                // Right Option pressed down
-                rightOptionDown = true
-                otherKeyPressed = false
-                print("[HotkeyManager] Right Option ↓ (keycode=\(keycode), flags=\(flags.rawValue))")
-            } else if !isOptionDown && rightOptionDown {
-                // Right Option released
-                rightOptionDown = false
-                print("[HotkeyManager] Right Option ↑ (otherKeyPressed=\(otherKeyPressed))")
-
-                if !otherKeyPressed {
-                    // Clean press-and-release with no other keys
-                    let now = ProcessInfo.processInfo.systemUptime
-                    if now - lastToggleTime > debounceInterval {
-                        lastToggleTime = now
-                        print("[HotkeyManager] 🎤 Firing toggleRecording (handler set: \(onHotkeyEvent != nil))")
-                        onHotkeyEvent?(.toggleRecording)
-                    } else {
-                        print("[HotkeyManager] Debounced (interval=\(now - lastToggleTime)s)")
-                    }
-                }
-            }
-        }
-
-        return Unmanaged.passRetained(event)
+    private func cancelTransientState() {
+        triggerKeyIsDown = false
+        holdStarted = false
+        waitingForSecondTap = false
+        otherKeyPressedWhileDown = false
+        pendingHoldStart?.cancel()
+        secondTapTimeoutWorkItem?.cancel()
     }
 }
 
-// C callback for CGEvent tap
 private func hotkeyCallback(
     proxy: CGEventTapProxy,
     type: CGEventType,
     event: CGEvent,
     userInfo: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
-    guard let userInfo = userInfo else {
+    guard let userInfo else {
         return Unmanaged.passRetained(event)
     }
     let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-    return manager.handleEvent(proxy, type, event)
+    return manager.handleEvent(type, event)
 }

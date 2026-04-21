@@ -1,73 +1,111 @@
-import Foundation
 import Combine
-import os
-
-private let tmLogger = Logger(subsystem: "com.doubao.murmur", category: "TranscriptionManager")
+import Foundation
+import AppKit
 
 @MainActor
-class TranscriptionManager {
+final class TranscriptionManager {
+    private let log = AppLog(category: "Transcription")
     private let appState: AppState
     private let webViewManager: WebViewManager
     private let overlayPanel: OverlayPanel
     private let hotkeyManager: HotkeyManager
+    private let settingsStore: SettingsStore
     private let asrClient = DoubaoASRClient()
     private let audioCapture = AudioCaptureManager()
+    private let llmRefiner = LLMRefiner()
 
-    /// Whether the current WSS connection is using cached (file-based) params.
+    private var cancellables = Set<AnyCancellable>()
+    private var waveformProcessor = WaveformLevelProcessor()
+    private var currentTranscription = ""
     private var usingCachedParams = false
-
-    /// True after stopRecording(): the next `onResult` triggers completion immediately.
     private var awaitingFinalResult = false
+    private var mockWorkItems: [DispatchWorkItem] = []
+    private var targetApplication: NSRunningApplication?
 
-    /// Called when auth has expired and user needs to re-login.
     var onAuthExpired: (() -> Void)?
 
     init(
         appState: AppState,
         webViewManager: WebViewManager,
         overlayPanel: OverlayPanel,
-        hotkeyManager: HotkeyManager
+        hotkeyManager: HotkeyManager,
+        settingsStore: SettingsStore
     ) {
         self.appState = appState
         self.webViewManager = webViewManager
         self.overlayPanel = overlayPanel
         self.hotkeyManager = hotkeyManager
+        self.settingsStore = settingsStore
     }
 
     func start() {
-        // Wire up hotkey events
+        wireHotkeys()
+        wireASR()
+        wireAudioCapture()
+        wireOverlay()
+
+        settingsStore.$shortcutConfiguration
+            .receive(on: RunLoop.main)
+            .sink { [weak self] config in
+                self?.hotkeyManager.updateConfiguration(config)
+            }
+            .store(in: &cancellables)
+
+        hotkeyManager.start()
+        log.notice("transcription manager started")
+    }
+
+    func automationStartRecording() {
+        startRecording()
+    }
+
+    func automationStopRecording() {
+        stopRecording()
+    }
+
+    private func wireHotkeys() {
         hotkeyManager.onHotkeyEvent = { [weak self] event in
-            tmLogger.notice("Received hotkey event: \(String(describing: event))")
             Task { @MainActor in
-                guard let self = self else { return }
+                guard let self else { return }
                 switch event {
+                case .startRecording:
+                    self.startRecording()
+                case .stopRecording:
+                    self.stopRecording()
                 case .toggleRecording:
-                    self.handleToggle()
+                    self.toggleRecording()
                 case .cancel:
-                    self.handleCancel()
+                    self.cancelRecording()
                 }
             }
         }
-        hotkeyManager.setEscapeHandlingEnabled(false)
+    }
 
-        // Wire up native ASR client callbacks
+    private func wireASR() {
         asrClient.onOpen = { [weak self] in
             Task { @MainActor in
-                guard let self = self else { return }
-                print("[TranscriptionManager] ASR WebSocket opened, buffered audio flushed")
-                guard self.appState.recordingState == .starting else { return }
-                self.setRecordingState(.recording)
-                // Audio capture is already running; buffered data was flushed by ASR client.
+                guard let self else { return }
+                if self.appState.recordingState == .starting {
+                    self.appState.recordingState = .recording
+                    self.hotkeyManager.setEscapeHandlingEnabled(true)
+                    self.overlayPanel.showListening(text: self.currentTranscription.isEmpty ? "正在聆听…" : self.currentTranscription)
+                }
+                self.log.notice("ASR connection open")
             }
         }
 
         asrClient.onResult = { [weak self] text in
             Task { @MainActor in
-                guard let self = self else { return }
-                self.appState.transcriptionText = text
+                guard let self else { return }
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                self.currentTranscription = trimmed
+                self.appState.currentText = trimmed
+                self.log.info("Partial: \(trimmed)")
                 if self.appState.recordingState == .starting {
-                    self.setRecordingState(.recording)
+                    self.appState.recordingState = .recording
                 }
+                self.overlayPanel.showListening(text: trimmed)
                 if self.awaitingFinalResult {
                     self.awaitingFinalResult = false
                     self.completeTranscription()
@@ -77,7 +115,7 @@ class TranscriptionManager {
 
         asrClient.onFinish = { [weak self] in
             Task { @MainActor in
-                guard let self = self else { return }
+                guard let self else { return }
                 self.awaitingFinalResult = false
                 if self.appState.recordingState == .stopping || self.appState.recordingState == .recording {
                     self.completeTranscription()
@@ -87,194 +125,289 @@ class TranscriptionManager {
 
         asrClient.onError = { [weak self] error in
             Task { @MainActor in
-                guard let self = self else { return }
-                guard self.appState.recordingState != .idle else { return }
-                print("[TranscriptionManager] ASR error: \(error?.localizedDescription ?? "unknown")")
-
-                // If we used cached params and got a connection error, it might be auth-related
+                guard let self else { return }
+                self.log.error("ASR error: \(error?.localizedDescription ?? "unknown")")
                 if self.usingCachedParams {
                     self.handleAuthFailure()
                     return
                 }
-
-                self.appState.errorMessage = "连接出错"
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                    self?.resetToIdle()
-                }
+                self.overlayPanel.showError(text: "连接出错")
+                self.resetToIdle(after: 1.2)
             }
         }
 
         asrClient.onAuthError = { [weak self] in
             Task { @MainActor in
-                guard let self = self else { return }
-                self.handleAuthFailure()
+                self?.handleAuthFailure()
             }
         }
+    }
 
-        // Pipe captured audio directly to the ASR client
+    private func wireAudioCapture() {
         audioCapture.onAudioData = { [weak self] data in
             self?.asrClient.sendAudio(data)
         }
-
-        // Wire up overlay panel ESC key (works even with Secure Keyboard Entry)
-        overlayPanel.onCancel = { [weak self] in
+        audioCapture.onRMS = { [weak self] rms in
             Task { @MainActor in
-                self?.handleCancel()
+                guard let self else { return }
+                let levels = self.waveformProcessor.process(
+                    rms: rms,
+                    randomValues: nil
+                ).map { CGFloat($0) }
+                self.overlayPanel.updateWaveform(levels: levels)
             }
         }
-
-        hotkeyManager.start()
-        print("[TranscriptionManager] ✅ Started")
     }
 
-    // MARK: - Toggle Recording
+    private func wireOverlay() {
+        overlayPanel.onCancel = { [weak self] in
+            Task { @MainActor in
+                self?.cancelRecording()
+            }
+        }
+    }
 
-    private func handleToggle() {
-        print("[TranscriptionManager] handleToggle called, current state: \(appState.recordingState)")
+    private func toggleRecording() {
         switch appState.recordingState {
         case .idle:
             startRecording()
         case .starting, .recording:
             stopRecording()
-        case .stopping:
+        case .stopping, .refining:
             break
         }
     }
 
     private func startRecording() {
         guard appState.loginStatus == .loggedIn else {
-            print("[TranscriptionManager] ⚠️ Not logged in, showing login window")
+            log.notice("recording requested while logged out")
             webViewManager.showLoginWindow()
             return
         }
 
-        print("[TranscriptionManager] 🎤 Starting recording...")
-        setRecordingState(.starting)
-        appState.transcriptionText = ""
-        appState.errorMessage = nil
-        overlayPanel.showOverlay()
+        log.notice("start recording")
+        targetApplication = NSWorkspace.shared.frontmostApplication
+        log.notice("target application = \(targetApplication?.localizedName ?? "nil")")
+        currentTranscription = ""
+        appState.currentText = ""
+        appState.recordingState = .starting
+        waveformProcessor.reset()
+        overlayPanel.showListening()
+        overlayPanel.updateWaveform(levels: Array(repeating: 0.12, count: 5))
+        hotkeyManager.setEscapeHandlingEnabled(true)
 
-        // Start audio capture immediately — audio is buffered in ASR client until WebSocket connects.
+        if AutomationController.shouldMockASR {
+            startMockASRSession()
+            return
+        }
+
         do {
             try audioCapture.startCapture()
         } catch {
-            print("[TranscriptionManager] ❌ Audio capture failed: \(error)")
-            appState.errorMessage = "麦克风启动失败"
-            resetToIdle()
+            log.error("audio capture failed: \(error.localizedDescription)")
+            overlayPanel.showError(text: "麦克风启动失败")
+            resetToIdle(after: 1.2)
             return
         }
 
         Task {
-            // 1. Try cached params from local config file first
             if let cachedParams = ASRParamsStore.load() {
-                print("[TranscriptionManager] Using cached ASR params")
-                self.usingCachedParams = true
-                self.asrClient.connect(params: cachedParams)
+                usingCachedParams = true
+                asrClient.connect(params: cachedParams)
                 return
             }
 
-            // 2. Fall back to extracting from active WebView
-            if webViewManager.isActive {
-                guard let params = await webViewManager.extractASRParams() else {
-                    self.appState.errorMessage = "无法获取连接参数，请重新登录"
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                        self?.resetToIdle()
-                    }
-                    return
-                }
-                // Save for future use
+            if webViewManager.isActive,
+               let params = await webViewManager.extractASRParams() {
+                usingCachedParams = false
                 ASRParamsStore.save(params)
-                self.usingCachedParams = false
-                self.asrClient.connect(params: params)
+                asrClient.connect(params: params)
                 return
             }
 
-            // 3. No params available at all
-            self.appState.errorMessage = "无法获取连接参数，请重新登录"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                self?.resetToIdle()
-            }
+            overlayPanel.showError(text: "无法获取连接参数 请重新登录")
+            resetToIdle(after: 1.2)
         }
     }
 
     private func stopRecording() {
-        print("[TranscriptionManager] ⏹ Stopping recording...")
-        setRecordingState(.stopping)
+        guard appState.recordingState == .starting || appState.recordingState == .recording else {
+            return
+        }
+        log.notice("stop recording")
+        appState.recordingState = .stopping
+
+        if AutomationController.shouldMockASR {
+            currentTranscription = AutomationController.mockASRFinal ?? currentTranscription
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.completeTranscription()
+            }
+            return
+        }
+
         audioCapture.stopCapture()
         asrClient.finishSending()
         awaitingFinalResult = true
 
-        // Safety timeout: if no result or finish arrives within 1 second, complete with current text
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self = self, self.appState.recordingState == .stopping else { return }
-            print("[TranscriptionManager] ⏱ Safety timeout, completing with current text")
+            guard let self, self.appState.recordingState == .stopping else { return }
             self.awaitingFinalResult = false
             self.completeTranscription()
         }
     }
 
-    // MARK: - Auth Failure
+    private func completeTranscription() {
+        let originalText = currentTranscription.trimmingCharacters(in: .whitespacesAndNewlines)
+        log.notice("complete transcription originalLength=\(originalText.count)")
+
+        guard !originalText.isEmpty else {
+            resetToIdle(after: 0)
+            return
+        }
+
+        let llmConfiguration = settingsStore.llmConfiguration
+        if llmConfiguration.isEnabled && settingsStore.isLLMReady {
+            appState.recordingState = .refining
+            overlayPanel.showRefining()
+            Task {
+                await refineAndPaste(originalText, configuration: llmConfiguration)
+            }
+            return
+        }
+
+        pasteAndDismiss(originalText)
+    }
+
+    private func refineAndPaste(_ originalText: String, configuration: LLMConfiguration) async {
+        do {
+            let refined = try await llmRefiner.refine(
+                text: originalText,
+                configuration: configuration,
+                apiKey: settingsStore.apiKey
+            ) { [weak self] streamedText in
+                Task { @MainActor in
+                    self?.overlayPanel.updateText(streamedText.isEmpty ? "Refining…" : streamedText)
+                }
+            }
+
+            let finalText = refined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? originalText : refined
+            overlayPanel.updateText(finalText)
+            pasteAndDismiss(finalText)
+        } catch let error as LLMRefinerError {
+            handleLLMFallback(error: error, originalText: originalText)
+        } catch {
+            handleLLMFallback(error: .unreachable, originalText: originalText)
+        }
+    }
+
+    private func handleLLMFallback(error: LLMRefinerError, originalText: String) {
+        let message: String
+        switch error {
+        case .timeout:
+            message = "LLM timeout"
+        case .httpError(let statusCode, _):
+            message = "LLM error: \(statusCode)"
+        case .unreachable:
+            message = "LLM unreachable"
+        default:
+            message = error.localizedDescription
+        }
+
+        appState.lastNotification = message
+        NotificationHelper.show(title: "VoiceInput", body: message)
+        log.error("LLM fallback triggered: \(message)")
+        overlayPanel.updateText(originalText)
+        pasteAndDismiss(originalText)
+    }
+
+    private func pasteAndDismiss(_ text: String) {
+        let finalText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !finalText.isEmpty else {
+            resetToIdle(after: 0)
+            return
+        }
+        log.notice("pasting into \(targetApplication?.localizedName ?? "nil")")
+        overlayPanel.hideOverlay(animated: false)
+        PasteHelper.copyAndPaste(finalText, targetApplication: targetApplication)
+        resetToIdle(after: 0.25)
+    }
+
+    private func cancelRecording() {
+        guard appState.recordingState != .idle else { return }
+        log.notice("cancel recording")
+        awaitingFinalResult = false
+        cancelMockASRSession()
+        audioCapture.stopCapture()
+        asrClient.disconnect()
+        resetToIdle(after: 0)
+    }
 
     private func handleAuthFailure() {
-        print("[TranscriptionManager] ⚠️ Auth failure detected, clearing cached params")
+        log.notice("auth failure detected")
         ASRParamsStore.clear()
         usingCachedParams = false
         audioCapture.stopCapture()
         asrClient.disconnect()
-        resetToIdle()
-
-        // Notify delegate (AppDelegate) to prompt user for re-auth
         appState.loginStatus = .notLoggedIn
+        resetToIdle(after: 0)
         onAuthExpired?()
     }
 
-    // MARK: - Cancel
-
-    private func handleCancel() {
-        tmLogger.notice("handleCancel called, current state: \(String(describing: self.appState.recordingState))")
-        guard appState.recordingState != .idle else {
-            tmLogger.warning("Cancel ignored: already idle")
-            return
-        }
-        tmLogger.notice("Cancelling transcription...")
-        awaitingFinalResult = false
-        audioCapture.stopCapture()
-        asrClient.disconnect()
-        resetToIdle()
-    }
-
-    // MARK: - Completion
-
-    private func completeTranscription() {
-        let text = appState.transcriptionText.trimmingCharacters(in: .whitespacesAndNewlines)
-        print("[TranscriptionManager] ✅ Completing transcription, text=\"\(text)\"")
-
-        if !text.isEmpty {
-            PasteHelper.copyAndPaste(text)
+    private func resetToIdle(after delay: TimeInterval) {
+        let reset = { [weak self] in
+            guard let self else { return }
+            self.awaitingFinalResult = false
+            self.cancelMockASRSession()
+            self.currentTranscription = ""
+            self.targetApplication = nil
+            self.audioCapture.stopCapture()
+            self.asrClient.disconnect()
+            self.appState.recordingState = .idle
+            self.appState.currentText = ""
+            self.hotkeyManager.setEscapeHandlingEnabled(false)
+            self.overlayPanel.hideOverlay(animated: true)
+            self.usingCachedParams = false
         }
 
-        resetToIdle()
-    }
-
-    private func resetToIdle() {
-        print("[TranscriptionManager] Resetting to idle")
-        awaitingFinalResult = false
-        audioCapture.stopCapture()
-        asrClient.disconnect()
-        setRecordingState(.idle)
-        appState.showOverlay = false
-        appState.errorMessage = nil
-        overlayPanel.hideOverlay()
-        usingCachedParams = false
-
-        // Clear transcription text after a short delay (so paste can complete)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            self?.appState.transcriptionText = ""
+        if delay == 0 {
+            reset()
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                reset()
+            }
         }
     }
 
-    private func setRecordingState(_ newState: RecordingState) {
-        appState.recordingState = newState
-        hotkeyManager.setEscapeHandlingEnabled(newState != .idle)
+    private func startMockASRSession() {
+        appState.recordingState = .recording
+        overlayPanel.showListening()
+
+        let partials = AutomationController.mockASRPartials
+        let rmsValues = AutomationController.mockASRWaveformValues.isEmpty
+            ? [0.01, 0.03, 0.08, 0.12, 0.04]
+            : AutomationController.mockASRWaveformValues
+
+        for (index, partial) in partials.enumerated() {
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self, self.appState.recordingState == .recording else { return }
+                self.currentTranscription = partial
+                self.appState.currentText = partial
+                self.log.info("Partial: \(partial)")
+                let rms = rmsValues[index % rmsValues.count]
+                let levels = self.waveformProcessor.process(
+                    rms: rms,
+                    randomValues: [0, 0, 0, 0, 0]
+                ).map { CGFloat($0) }
+                self.overlayPanel.showListening(text: partial)
+                self.overlayPanel.updateWaveform(levels: levels)
+            }
+            mockWorkItems.append(workItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18 * Double(index + 1), execute: workItem)
+        }
+    }
+
+    private func cancelMockASRSession() {
+        mockWorkItems.forEach { $0.cancel() }
+        mockWorkItems.removeAll()
     }
 }

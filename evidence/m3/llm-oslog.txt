@@ -1,0 +1,10 @@
+Timestamp               Ty Process[PID:TID]
+2026-04-22 02:29:59.574 Df VoiceInput[18846:82406d] [com.voiceinput.app:AppDelegate] application did finish launching
+2026-04-22 02:29:59.623 Df VoiceInput[18846:82406d] [com.voiceinput.app:Transcription] transcription manager started
+2026-04-22 02:29:59.643 Df VoiceInput[18846:82406d] [com.voiceinput.app:Hotkey] shortcut updated key=rightOption mode=singleTapToggle doubleTap=300
+2026-04-22 02:30:00.479 Df VoiceInput[18846:82406d] [com.voiceinput.app:Transcription] start recording
+2026-04-22 02:30:00.479 Df VoiceInput[18846:82406d] [com.voiceinput.app:Transcription] target application = 文本编辑
+2026-04-22 02:30:01.945 Df VoiceInput[18846:82406d] [com.voiceinput.app:Transcription] stop recording
+2026-04-22 02:30:02.045 Df VoiceInput[18846:82406d] [com.voiceinput.app:Transcription] complete transcription originalLength=16
+2026-04-22 02:30:04.113 E  VoiceInput[18846:82406d] [com.voiceinput.app:Transcription] LLM fallback triggered: LLM timeout
+2026-04-22 02:30:04.117 Df VoiceInput[18846:82406d] [com.voiceinput.app:Transcription] pasting into 文本编辑

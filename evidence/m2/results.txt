@@ -1,0 +1,8 @@
+PASS 悬浮窗截图对比参数
+PASS 波形动画 mock RMS 单元测试
+PASS 文字宽度变化平滑
+PASS 多显示器场景落在主屏
+PASS Shortcut 配置写入并读回
+PASS Hold Single Double 三模式自动化
+PASS 切换触发键旧键忽略新键响应
+PASS CapsLock 选中弹出引导窗口

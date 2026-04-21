@@ -237,7 +237,7 @@ class WebViewManager: NSObject {
 
 // MARK: - WKScriptMessageHandler
 extension WebViewManager: WKScriptMessageHandler {
-    nonisolated func userContentController(
+    func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
@@ -264,15 +264,13 @@ extension WebViewManager: WKScriptMessageHandler {
 
 // MARK: - WKNavigationDelegate
 extension WebViewManager: WKNavigationDelegate {
-    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        Task { @MainActor in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                self?.checkLoginState()
-            }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.checkLoginState()
         }
     }
 
-    nonisolated func webView(
+    func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
@@ -291,7 +289,7 @@ extension WebViewManager: WKNavigationDelegate {
 // MARK: - WKUIDelegate
 extension WebViewManager: WKUIDelegate {
     // Auto-grant microphone permission
-    nonisolated func webView(
+    func webView(
         _ webView: WKWebView,
         requestMediaCapturePermissionFor origin: WKSecurityOrigin,
         initiatedByFrame frame: WKFrameInfo,
@@ -302,7 +300,7 @@ extension WebViewManager: WKUIDelegate {
     }
 
     // Handle window.open (e.g., login popups)
-    nonisolated func webView(
+    func webView(
         _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction,

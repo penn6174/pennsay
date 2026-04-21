@@ -1,0 +1,3 @@
+triggerKey=leftCommand
+mode=doubleTapToggle
+doubleTapWindowMs=420

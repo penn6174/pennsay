@@ -1,0 +1,3 @@
+mainVisibleFrame={{0, 74}, {1470, 849}}
+overlayFrame= [[647, 154], [174, 56]]
+PASS overlay on NSScreen.main visibleFrame

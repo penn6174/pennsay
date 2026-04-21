@@ -1,0 +1,5 @@
+PASS louder RMS produces taller center bar
+PASS louder RMS increases overall height
+PASS release keeps bars above minimum height
+PASS release shrinks bars after silence
+PASS waveform heights stay within bounds

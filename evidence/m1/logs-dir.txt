@@ -1,0 +1,4 @@
+total 8
+drwxr-xr-x@  3 penntiao  staff    96 Apr 22 01:57 .
+drwx------+ 13 penntiao  staff   416 Apr 22 01:57 ..
+-rw-r--r--@  1 penntiao  staff  2381 Apr 22 02:13 voiceinput.log

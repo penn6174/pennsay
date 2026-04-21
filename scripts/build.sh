@@ -1,16 +1,76 @@
 #!/bin/bash
-# Build the app
-set -e
-cd "$(dirname "$0")/.."
+set -euo pipefail
 
-echo "🔨 Building doubao-murmur..."
-xcodebuild -project doubao-murmur.xcodeproj \
-  -scheme doubao-murmur \
-  -configuration Debug \
-  -derivedDataPath build \
-  CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION=YES \
-  build \
-  2>&1 | grep -E '(error:|warning:|BUILD SUCCEEDED|BUILD FAILED|CompileSwift|Linking)'
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CONFIGURATION="${1:-Debug}"
+APP_NAME="VoiceInput"
+SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
+BUILD_ROOT="${VOICEINPUT_BUILD_ROOT:-$HOME/.voiceinput-build}"
+BUILD_LINK="$ROOT_DIR/build"
+BUILD_DIR="$BUILD_ROOT/$CONFIGURATION"
+APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
+MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
+RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
+INFO_PLIST="$APP_BUNDLE/Contents/Info.plist"
+DEFAULT_VERSION="$(sed -n 's/.*MARKETING_VERSION: "\(.*\)"/\1/p' "$ROOT_DIR/project.yml" | head -n 1)"
+DEFAULT_BUILD_NUMBER="$(sed -n 's/.*CURRENT_PROJECT_VERSION: "\(.*\)"/\1/p' "$ROOT_DIR/project.yml" | head -n 1)"
+VERSION="${VOICEINPUT_VERSION:-$DEFAULT_VERSION}"
+BUILD_NUMBER="${VOICEINPUT_BUILD_NUMBER:-$DEFAULT_BUILD_NUMBER}"
 
-echo ""
-echo "✅ Build complete"
+ensure_build_link() {
+  mkdir -p "$BUILD_ROOT"
+  if [[ -L "$BUILD_LINK" ]]; then
+    ln -sfn "$BUILD_ROOT" "$BUILD_LINK"
+  elif [[ -e "$BUILD_LINK" ]]; then
+    rm -rf "$BUILD_LINK"
+    ln -s "$BUILD_ROOT" "$BUILD_LINK"
+  else
+    ln -s "$BUILD_ROOT" "$BUILD_LINK"
+  fi
+}
+
+cd "$ROOT_DIR"
+xcodegen generate >/dev/null
+ensure_build_link
+
+rm -rf "$APP_BUNDLE"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+
+SWIFT_FLAGS=(
+  Sources/VoiceInputCore/*.swift
+  doubao-murmur/*.swift
+  -target arm64-apple-macosx14.0
+  -sdk "$SDK_PATH"
+  -module-name "$APP_NAME"
+  -o "$MACOS_DIR/$APP_NAME"
+)
+
+if [[ "$CONFIGURATION" == "Release" ]]; then
+  SWIFT_FLAGS+=(-Osize)
+else
+  SWIFT_FLAGS+=(-g)
+fi
+
+echo "Building $APP_NAME ($CONFIGURATION) v$VERSION..."
+swiftc "${SWIFT_FLAGS[@]}"
+
+cp "$ROOT_DIR/doubao-murmur/Resources/"*.js "$RESOURCES_DIR/"
+cp "$ROOT_DIR/doubao-murmur/Resources/AppIcon.icns" "$RESOURCES_DIR/"
+cp "$ROOT_DIR/doubao-murmur/Info.plist" "$INFO_PLIST"
+
+/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $APP_NAME" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.voiceinput.app" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $APP_NAME" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Set :LSUIElement true" "$INFO_PLIST"
+
+xattr -cr "$APP_BUNDLE" || true
+xattr -d -r com.apple.provenance "$APP_BUNDLE" >/dev/null 2>&1 || true
+xattr -d -r com.apple.FinderInfo "$APP_BUNDLE" >/dev/null 2>&1 || true
+xattr -d -r com.apple.fileprovider.fpfs#P "$APP_BUNDLE" >/dev/null 2>&1 || true
+codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null
+codesign --verify --deep --strict "$APP_BUNDLE" >/dev/null
+
+echo "Built app bundle: $APP_BUNDLE"

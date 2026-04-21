@@ -5,7 +5,11 @@ xcuserdata/
 DerivedData/
 
 # Build output
+build
 build/
+.tmp/
+VoiceInput.xcodeproj/
+PROMPT.md
 *.pbxuser
 *.mode1v3
 *.mode2v3

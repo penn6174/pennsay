@@ -6,14 +6,12 @@ struct ASRParamsStore {
     private static let fileName = "asr_params.json"
 
     private static var fileURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("com.doubao.murmur")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent(fileName)
+        AppEnvironment.appSupportDirectoryURL.appendingPathComponent(fileName)
     }
 
     static func save(_ params: DoubaoASRParams) {
         do {
+            _ = AppEnvironment.ensureAppSupportDirectoryExists()
             let data = try JSONEncoder().encode(params)
             try data.write(to: fileURL, options: .atomic)
             print("[ASRParamsStore] ✅ Saved ASR params to \(fileURL.path)")

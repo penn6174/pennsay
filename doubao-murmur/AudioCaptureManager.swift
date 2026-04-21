@@ -10,6 +10,7 @@ class AudioCaptureManager {
 
     /// Called on the audio thread with raw Int16 LE PCM data ready to send over WebSocket.
     var onAudioData: ((Data) -> Void)?
+    var onRMS: ((Double) -> Void)?
 
     func startCapture() throws {
         guard !isCapturing else { return }
@@ -88,10 +89,13 @@ class AudioCaptureManager {
 
         guard status != .error, error == nil, outputBuffer.frameLength > 0 else { return }
 
-        // Float32 → Int16 LE using doubao's non-symmetric scaling:
-        //   negative samples × 32768, positive samples × 32767
         let floats = outputBuffer.floatChannelData![0]
         let count = Int(outputBuffer.frameLength)
+        let rms = rmsValue(from: floats, count: count)
+        onRMS?(rms)
+
+        // Float32 → Int16 LE using doubao's non-symmetric scaling:
+        //   negative samples × 32768, positive samples × 32767
         var pcm = Data(count: count * 2)
         pcm.withUnsafeMutableBytes { raw in
             let int16 = raw.bindMemory(to: Int16.self)
@@ -103,5 +107,15 @@ class AudioCaptureManager {
         }
 
         onAudioData(pcm)
+    }
+
+    private func rmsValue(from buffer: UnsafePointer<Float>, count: Int) -> Double {
+        guard count > 0 else { return 0 }
+        var sum: Double = 0
+        for index in 0..<count {
+            let sample = Double(buffer[index])
+            sum += sample * sample
+        }
+        return sqrt(sum / Double(count))
     }
 }

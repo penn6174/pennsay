@@ -1,103 +1,140 @@
-# Doubao Murmur
+# VoiceInput
 
-一个 macOS 菜单栏应用，通过劫持豆包 Web 版的语音识别能力，实现全局语音输入。
+`VoiceInput` 是一个 macOS 14+ 菜单栏语音输入工具。它沿用 `lilong7676/doubao-murmur` 的豆包 Web 登录劫持和 WSS ASR 方案，在此基础上补了原生悬浮窗、可配置快捷键、LLM 流式后处理、更新检查、卸载和分发链路。
 
-按下右 `⌥ Option` 键开始/停止语音识别，识别结果自动复制到剪贴板并粘贴到当前光标所在的输入框。
+## 特性
 
-<p align="center">
-  <img src="docs/screenshots/overlay_pannel.png" width="500" alt="语音识别悬浮窗">
-</p>
+- 菜单栏常驻应用，`LSUIElement = YES`
+- 豆包 Web 登录提取凭证后销毁 `WKWebView`
+- 底部居中的 HUD 悬浮窗，实时波形由音频 RMS 驱动
+- 可配置快捷键系统
+  - `Right Option` / `Left Option` / `Right Command` / `Left Command` / `Right Control`
+  - `Caps Lock` 引导关闭锁定行为
+  - `Fn` 可选但带警告
+  - `Hold` / `Single Tap Toggle` / `Double Tap Toggle`
+- LLM 流式润色
+  - 自定义 `Base URL` / `API Key` / `Model` / `System Prompt` / `Timeout`
+  - API Key 存 Keychain，其他配置存 `UserDefaults`
+  - 任意失败都回退粘贴 ASR 原文
+- 原生 Settings 窗口
+  - `General`
+  - `Shortcut`
+  - `LLM 润色`
+- 日志同时写 `os.Logger` 和 `~/Library/Logs/DoubaoMurmur/voiceinput.log`
+- `make build` / `make run` / `make release` / `make install` / `make clean`
 
-## 免责声明
+## 系统要求
 
-- **本项目仅供个人学习和研究使用**，不得用于任何商业用途。
-- 本项目通过内嵌 WKWebView 加载豆包（doubao.com）网页版来调用其语音识别功能，**并非官方提供的 API 或 SDK**。豆包的页面结构、接口随时可能变化，届时本项目可能无法正常工作。
-- 使用本项目前，你需要拥有一个有效的豆包账号并自行完成登录。
-- 本项目不会收集、存储或上传你的任何数据（包括语音数据和识别结果），所有处理均在本地完成，语音数据由豆包服务端处理。
-- 使用本项目所产生的一切后果由使用者自行承担，作者不对因使用本项目而导致的任何损失或问题负责。
-- 如果本项目侵犯了相关方的权益，请联系作者删除。
+- macOS 14+
+- XcodeGen
+- Swift toolchain
+- 首次运行时授予：
+  - `辅助功能`
+  - `麦克风`
 
-## 核心原理
+## 安装
 
-首次使用时，应用通过内嵌 WebView 加载豆包网页版完成登录，提取认证凭证（Cookie、设备标识等）保存到本地后立即销毁 WebView 释放资源。
+从 Releases 下载以下任一产物：
 
-后续使用时无需再加载网页。应用直接使用本地保存的凭证，通过原生 WebSocket 连接豆包的流式语音识别服务，将麦克风采集的音频实时发送到服务端，接收识别结果后自动粘贴到当前输入框。
+- `VoiceInput-vX.Y.Z.app`
+- `VoiceInput-vX.Y.Z.zip`
+- `VoiceInput-vX.Y.Z.dmg`
 
-当凭证过期时，应用会自动检测并提示重新登录，登录后再次提取凭证并销毁 WebView，如此循环。
+首次打开未公证的构建时，Gatekeeper 可能阻止启动。可按下面流程放行：
 
-## 使用方式
+1. 先双击应用，让系统拦截一次。
+2. 打开 `系统设置 -> 隐私与安全性`。
+3. 在底部找到 `仍要打开`。
+4. 再次确认启动。
 
-### 安装
+## 首次使用
 
-从 [Releases](../../releases) 页面下载最新版本的 `Doubao-Murmur-vX.X.X.zip`，解压后将 `Doubao Murmur.app` 拖入「应用程序」文件夹即可。
+1. 启动应用后，在菜单栏确认状态项出现。
+2. 如果还没登录，点击 `登录豆包`，在弹出的窗口里完成网页登录。
+3. 授予 `辅助功能` 和 `麦克风` 权限。
+4. 在 `设置... -> Shortcut` 里确认触发键和模式。
+5. 如果要启用后处理，在 `设置... -> LLM 润色` 里配置 API。
 
-> 要求 macOS 13.0+
+## 快捷键
 
-### 首次使用
+默认值：
 
-1. **授予辅助功能权限**：首次启动时，系统会提示授予辅助功能权限（系统设置 → 隐私与安全性 → 辅助功能），这是监听全局快捷键所必需的。
-2. **授予麦克风权限**：首次语音输入时，系统会提示授予麦克风权限。
-3. **登录豆包**：点击菜单栏图标，选择「登录豆包」，在弹出的窗口中完成登录。登录成功后窗口会自动关闭。
+- 触发键：`Right Option`
+- 模式：`Hold`
+- Double Tap 时间窗：`300ms`
+- 取消：`Esc`
 
-### 快捷键
+在 `Hold` 模式下，按住说话，松开结束。短于 `80ms` 的按压会被当成误触忽略。
 
-| 快捷键 | 功能 |
-|--------|------|
-| 右 `⌥ Option` | 开始 / 停止语音识别 |
-| `ESC` | 取消当前语音识别（不复制、不粘贴） |
+## LLM 润色
 
-### 使用流程
+`LLM 润色` 面板支持：
 
-<img src="docs/screenshots/menu_bar.png" width="240" alt="菜单栏">
+- 启用/禁用
+- API Base URL
+- API Key
+- Model
+- System Prompt
+- Timeout
+- `Test`
+- `重置 System Prompt 为默认值`
+- `Save`
 
-1. 确保菜单栏显示「已登录」状态
-2. 将光标定位到任意输入框
-3. 按下右 `⌥ Option` 键，屏幕顶部出现悬浮窗，开始说话
-4. 悬浮窗中会实时显示识别到的文字
-5. 再次按下右 `⌥ Option` 键结束识别，文字会自动复制到剪贴板并粘贴到输入框
-6. 如果想取消，按 `ESC` 即可
+失败兜底策略：
 
-点击菜单中的「使用帮助」可查看快捷键和使用说明：
+- Timeout：通知 `LLM timeout`，粘贴 ASR 原文
+- HTTP 错误：通知 `LLM error: {code}`，粘贴 ASR 原文
+- 网络不可达：通知 `LLM unreachable`，粘贴 ASR 原文
+- API Key 为空时，启用开关自动灰显
 
-<img src="docs/screenshots/help_pannel.png" width="400" alt="使用帮助">
-
-## 开发
-
-### 环境要求
-
-- macOS 13.0+
-- Xcode 15.0+
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-
-### 构建与运行
+## 构建
 
 ```bash
-# 克隆项目
-git clone <repo-url>
-cd doubao-murmur
-
-# 生成 Xcode 项目
 xcodegen generate
-
-# 构建
-./scripts/build.sh
-
-# 运行（构建后直接运行，日志输出到终端）
-./scripts/run.sh
-
-# 或者一步完成构建+运行
-./scripts/dev.sh
+make build
+make run
 ```
 
-### 发布
-
-推送 `v*` 格式的 tag 会自动触发 GitHub Actions 构建并创建 Release：
+发布构建：
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+make release
 ```
+
+安装到 `/Applications`：
+
+```bash
+make install
+```
+
+## 目录
+
+- App Support：`~/Library/Application Support/DoubaoMurmur/`
+- Preferences：`~/Library/Preferences/com.voiceinput.app.plist`
+- Logs：`~/Library/Logs/DoubaoMurmur/`
+- Keychain Service：`DoubaoMurmur`
+
+## 手动卸载
+
+菜单栏里有 `卸载并退出`，会尝试自动清理。若需手动审计或兜底删除，请检查并移除：
+
+- `/Applications/VoiceInput.app`
+- `~/Library/Application Support/DoubaoMurmur/`
+- `~/Library/Preferences/com.voiceinput.app.plist`
+- `~/Library/Logs/DoubaoMurmur/`
+- Keychain 中 service 为 `DoubaoMurmur` 的通用密码项
+
+可用于复核的命令：
+
+```bash
+security find-generic-password -s DoubaoMurmur
+find ~/Library \( -iname "*doubaomurmur*" -o -iname "voiceinput*" \)
+```
+
+## 开发说明
+
+本仓库保留 `project.yml` 和 `xcodegen generate`，同时补了一个不依赖完整 Xcode 的 `swiftc` 打包链路，便于在只装 Command Line Tools 的机器上构建 `.app`。
 
 ## License
 
-[MIT](LICENSE)
+MIT

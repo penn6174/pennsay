@@ -1,0 +1,3 @@
+PASS hold actual='HOLD_OK' expectedContains='HOLD_OK'
+PASS singleTapToggle actual='SINGLE_OK' expectedContains='SINGLE_OK'
+PASS doubleTapToggle actual='DOUBLE_OK' expectedContains='DOUBLE_OK'

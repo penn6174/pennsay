@@ -1,0 +1,17 @@
+2026-04-21T18:21:19.823Z [bootstrap] log ready at /Users/penntiao/Library/Logs/DoubaoMurmur/voiceinput.log
+2026-04-21T18:21:19.824Z [NOTICE][AppDelegate] application did finish launching
+2026-04-21T18:21:19.860Z [NOTICE][Transcription] transcription manager started
+2026-04-21T18:21:19.864Z [NOTICE][Hotkey] shortcut updated key=rightOption mode=singleTapToggle doubleTap=300
+2026-04-21T18:21:20.384Z [NOTICE][Hotkey] shortcut updated key=rightCommand mode=singleTapToggle doubleTap=300
+2026-04-21T18:21:25.570Z [NOTICE][Hotkey] trigger down key=rightCommand mode=singleTapToggle
+2026-04-21T18:21:25.691Z [NOTICE][Hotkey] trigger up mode=singleTapToggle duration=0.12096158333588392 waitingSecondTap=false
+2026-04-21T18:21:25.691Z [NOTICE][Transcription] start recording
+2026-04-21T18:21:25.692Z [NOTICE][Transcription] target application = 文本编辑
+2026-04-21T18:21:25.899Z [INFO][Transcription] Partial: 切
+2026-04-21T18:21:26.075Z [INFO][Transcription] Partial: 切换
+2026-04-21T18:21:26.276Z [INFO][Transcription] Partial: 切换 键位
+2026-04-21T18:21:27.474Z [NOTICE][Hotkey] trigger down key=rightCommand mode=singleTapToggle
+2026-04-21T18:21:27.593Z [NOTICE][Hotkey] trigger up mode=singleTapToggle duration=0.11909416667185724 waitingSecondTap=false
+2026-04-21T18:21:27.593Z [NOTICE][Transcription] stop recording
+2026-04-21T18:21:27.698Z [NOTICE][Transcription] complete transcription originalLength=13
+2026-04-21T18:21:27.699Z [NOTICE][Transcription] pasting into 文本编辑
