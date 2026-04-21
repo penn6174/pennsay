@@ -1,0 +1,11 @@
+DMG_PATH=/Users/penntiao/Desktop/voice-input/build/PennSay-v1.0.2.dmg
+MOUNTPOINT=/tmp/pennsay-test
+total 24
+drwxr-xr-x@   5 penntiao  staff   238 Apr 22 04:45 .
+drwxrwxrwt  122 root      wheel  3904 Apr 22 04:46 ..
+-rw-r--r--@   1 penntiao  staff  6148 Apr 22 04:46 .DS_Store
+lrwxr-xr-x@   1 penntiao  staff    13 Apr 22 04:45 Applications -> /Applications
+drwxr-xr-x@   3 penntiao  staff   102 Apr 22 04:45 PennSay.app
+APP_OK=yes
+APPLICATIONS_LINK_OK=yes
+APPLICATIONS_LINK_TARGET=/Applications

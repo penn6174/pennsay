@@ -37,7 +37,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupTranscription()
         setupAutoUpdateScheduler()
         observeState()
-        requestMicrophonePermission()
         applyAutomationLaunchState()
     }
 

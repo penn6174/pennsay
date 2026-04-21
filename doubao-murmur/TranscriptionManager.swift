@@ -1,3 +1,4 @@
+import AVFoundation
 import Combine
 import Foundation
 import AppKit
@@ -183,6 +184,35 @@ final class TranscriptionManager {
             log.notice("recording requested while logged out")
             webViewManager.showLoginWindow()
             return
+        }
+
+        if !AutomationController.isEnabled {
+            switch AVCaptureDevice.authorizationStatus(for: .audio) {
+            case .authorized:
+                break
+            case .notDetermined:
+                log.notice("microphone permission not determined, requesting")
+                AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                    LogStore.write("[permission] microphone granted=\(granted)")
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        if granted {
+                            self.startRecording()
+                        } else {
+                            self.overlayPanel.showError(text: "需要麦克风权限 请到系统设置开启")
+                            self.resetToIdle(after: 2.0)
+                        }
+                    }
+                }
+                return
+            case .denied, .restricted:
+                log.error("microphone permission denied")
+                overlayPanel.showError(text: "麦克风权限被拒绝 请到系统设置开启")
+                resetToIdle(after: 2.0)
+                return
+            @unknown default:
+                break
+            }
         }
 
         log.notice("start recording")
