@@ -360,6 +360,14 @@ final class TranscriptionManager {
         overlayPanel.hideOverlay(animated: false)
         PasteHelper.copyAndPaste(finalText, targetApplication: targetApplication)
         resetToIdle(after: 0.25)
+
+        // Emit onboarding signal: first successful paste is the right moment to
+        // ask about Launch at Login (sits after Accessibility + Microphone
+        // system prompts, avoids stacking native dialogs).
+        NotificationCenter.default.post(
+            name: Notification.Name("PennSayDidCompletePaste"),
+            object: nil
+        )
     }
 
     private func cancelRecording() {

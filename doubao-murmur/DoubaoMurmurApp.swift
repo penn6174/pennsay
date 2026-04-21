@@ -38,6 +38,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupAutoUpdateScheduler()
         observeState()
         applyAutomationLaunchState()
+
+        // Onboarding prompt for launch-at-login is deliberately triggered by
+        // the first successful paste (after Accessibility + Microphone system
+        // prompts), NOT at launch — avoids stacking three native dialogs.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleFirstPasteCompletion),
+            name: Notification.Name("PennSayDidCompletePaste"),
+            object: nil
+        )
     }
 
     private func setupStatusItem() {
@@ -311,6 +321,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(AppEnvironment.ensureLogsDirectoryExists())
     }
 
+    @objc private func handleFirstPasteCompletion() {
+        let key = "onboarding.launchAtLoginPrompted"
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: key) else { return }
+        // If user already enabled launch-at-login in Settings, mark prompt as
+        // seen and skip the dialog.
+        guard !settingsStore.launchAtLoginEnabled else {
+            defaults.set(true, forKey: key)
+            return
+        }
+        defaults.set(true, forKey: key)
+
+        // Delay so the overlay退场 animation finishes and the paste lands in
+        // the target app before we steal focus with an alert.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            let alert = NSAlert()
+            alert.messageText = "让 \(AppEnvironment.displayName) 开机自启？"
+            alert.informativeText = "\(AppEnvironment.displayName) 是后台工具——定时检查更新、快捷键监听、自动升级都依赖它常驻。开机自启是最推荐的设置，随时可在 设置 → General 里关闭。"
+            alert.addButton(withTitle: "开启")
+            alert.addButton(withTitle: "以后再说")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            do {
+                try self.settingsStore.setLaunchAtLoginEnabled(true)
+            } catch {
+                self.log.error("launch at login onboarding failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
     @objc private func checkForUpdates() {
         Task {
             do {
@@ -324,15 +365,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     NSApp.activate(ignoringOtherApps: true)
                     alert.runModal()
                 case .updateAvailable(let release):
+                    // 优先走应用内自动下载 + 退出时替换路径；仅在 /Applications
+                    // 不可写等情况下 fallback 到打开 Release 页面
+                    let updater = AppUpdater.shared
+                    let canSilent = updater.canPrepareSilently(for: release)
                     let alert = NSAlert()
                     alert.messageText = "发现新版本 v\(release.version)"
-                    alert.informativeText = release.releaseNotes.isEmpty
-                        ? "是否打开 Release 页面？"
-                        : release.releaseNotes
-                    alert.addButton(withTitle: "打开 Release")
-                    alert.addButton(withTitle: "取消")
+                    if canSilent {
+                        alert.informativeText = (release.releaseNotes.isEmpty
+                            ? "下载后 Cmd+Q 退出 \(AppEnvironment.displayName)，重新打开即为新版本。"
+                            : release.releaseNotes + "\n\n下载后 Cmd+Q 退出 \(AppEnvironment.displayName)，重新打开即为新版本。")
+                        alert.addButton(withTitle: "下载并准备")
+                        alert.addButton(withTitle: "稍后")
+                    } else {
+                        alert.informativeText = release.releaseNotes.isEmpty
+                            ? "当前安装位置不可写，需要在浏览器中手动下载。"
+                            : release.releaseNotes
+                        alert.addButton(withTitle: "打开 Release")
+                        alert.addButton(withTitle: "取消")
+                    }
                     NSApp.activate(ignoringOtherApps: true)
-                    if alert.runModal() == .alertFirstButtonReturn {
+                    guard alert.runModal() == .alertFirstButtonReturn else { break }
+                    if canSilent {
+                        do {
+                            let result = try await updater.prepareUpdateIfNeeded(release: release)
+                            let body: String
+                            switch result {
+                            case .prepared:
+                                body = "\(AppEnvironment.displayName) 新版已下载好，Cmd+Q 退出后重新打开生效"
+                            case .alreadyPrepared:
+                                body = "新版本已在待安装队列，Cmd+Q 退出后重新打开生效"
+                            }
+                            NotificationHelper.show(title: AppEnvironment.displayName, body: body)
+                        } catch {
+                            log.error("manual update preparation failed: \(error.localizedDescription)")
+                            let failAlert = NSAlert()
+                            failAlert.messageText = "自动下载失败"
+                            failAlert.informativeText = "\(error.localizedDescription)\n将打开 Release 页面让你手动下载。"
+                            failAlert.addButton(withTitle: "打开 Release")
+                            failAlert.addButton(withTitle: "取消")
+                            if failAlert.runModal() == .alertFirstButtonReturn {
+                                AppUpdater.openReleasePage(release.htmlURL)
+                            }
+                        }
+                    } else {
                         AppUpdater.openReleasePage(release.htmlURL)
                     }
                 }
