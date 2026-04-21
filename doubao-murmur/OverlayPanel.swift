@@ -24,7 +24,10 @@ final class OverlayPanel: NSPanel {
     private enum Metrics {
         static let height: CGFloat = 56
         static let minWidth: CGFloat = 160
-        static let maxWidth: CGFloat = 560
+        static var maxWidth: CGFloat {
+            let screenWidth = NSScreen.main?.visibleFrame.width ?? 1600
+            return screenWidth * 0.7
+        }
         static let bottomInset: CGFloat = 80
         static let cornerRadius: CGFloat = 28
         static let leadingInset: CGFloat = 16

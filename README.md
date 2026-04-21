@@ -68,13 +68,13 @@
 
 ## 快捷键失灵怎么办
 
-因为使用 ad-hoc 签名，升级后 macOS TCC 数据库里记录的签名哈希会跟新 app 对不上，导致系统设置里权限看起来已授权但快捷键不响应。一行命令修复：
+因 ad-hoc 签名，升级后 TCC 记录的签名哈希会跟新 app 对不上，系统设置里权限看起来已允许但快捷键不响应。修复：
 
 ```bash
 tccutil reset Accessibility com.voiceinput.app
 ```
 
-然后重启 PennSay，同意弹出的 Accessibility 权限请求即可。brew cask 的 `postflight` 已经在新装时自动处理这个问题，但升级旧版本后若仍遇到，手动执行一次即可。
+然后重启 PennSay，同意新的权限请求即可。Homebrew cask 的 `postflight` 已在新装/升级时自动处理。
 
 ## LLM 润色
 
