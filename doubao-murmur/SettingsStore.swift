@@ -11,6 +11,7 @@ final class SettingsStore: ObservableObject {
         static let shortcutMode = "shortcut.mode"
         static let shortcutDoubleTapWindowMs = "shortcut.doubleTapWindowMs"
         static let llmConfiguration = "llm.configuration"
+        static let systemPromptVersion = "llm.systemPromptVersion"
         static let autoCheckEnabled = "updater.autoCheckEnabled"
         static let launchAtLogin = "app.launchAtLogin"
         static let launchAtLoginLastSynced = "app.launchAtLogin.lastSynced"
@@ -49,6 +50,7 @@ final class SettingsStore: ObservableObject {
         }
 
         apiKey = KeychainStore.readAPIKey()
+        migrateSystemPromptIfNeeded()
         if apiKey.isEmpty, llmConfiguration.isEnabled {
             llmConfiguration.isEnabled = false
             persistLLMConfiguration()
@@ -123,6 +125,28 @@ final class SettingsStore: ObservableObject {
     private func persistLLMConfiguration() {
         guard let data = try? JSONEncoder().encode(llmConfiguration) else { return }
         defaults.set(data, forKey: Keys.llmConfiguration)
+    }
+
+    private func migrateSystemPromptIfNeeded() {
+        let storedVersion = defaults.object(forKey: Keys.systemPromptVersion) as? Int ?? 0
+        guard storedVersion < LLMConfiguration.currentSystemPromptVersion else { return }
+
+        let normalizedPrompt = llmConfiguration.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPreviousDefaults = Set(
+            LLMConfiguration.knownPreviousDefaultPrompts.map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        )
+        let shouldReplacePrompt =
+            normalizedPrompt.isEmpty ||
+            normalizedPreviousDefaults.contains(normalizedPrompt)
+
+        if shouldReplacePrompt {
+            llmConfiguration.systemPrompt = LLMConfiguration.defaultPrompt
+            persistLLMConfiguration()
+        }
+
+        defaults.set(LLMConfiguration.currentSystemPromptVersion, forKey: Keys.systemPromptVersion)
     }
 
     private func reconcileLaunchAtLoginPreference() {
