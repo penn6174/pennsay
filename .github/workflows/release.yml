@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # needed for git rev-list since last version tag
 
       - name: Install dependencies
         run: brew install xcodegen create-dmg
@@ -25,10 +27,18 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "PENNSAY_VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "PENNSAY_BUILD_NUMBER=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          # Build number intentionally NOT set — scripts/build.sh derives it via
+          # `git rev-list v${VERSION}..HEAD --count + 1`, which keeps the number
+          # monotonic within a MARKETING_VERSION and resets to 1 on every bump.
 
       - name: Build release artifacts
         run: make release
+
+      - name: Read actual build number
+        run: |
+          PLIST="$HOME/.voiceinput-build/Release/PennSay.app/Contents/Info.plist"
+          BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST")
+          echo "PENNSAY_BUILD=$BUILD" >> "$GITHUB_ENV"
 
       - name: Upload versioned app bundle
         uses: actions/upload-artifact@v4
@@ -40,6 +50,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          append_body: true
+          body: |
+
+            ---
+            Build: ${{ env.PENNSAY_BUILD }}
           files: |
             build/PennSay-v${{ env.PENNSAY_VERSION }}.zip
             build/PennSay-v${{ env.PENNSAY_VERSION }}.dmg

@@ -2,6 +2,7 @@ import Foundation
 
 struct ReleaseInfo: Sendable {
     let version: String
+    let build: Int?
     let tag: String
     let releaseNotes: String
     let htmlURL: URL
@@ -82,17 +83,33 @@ struct UpdateChecker {
         let currentVersion = ProcessInfo.processInfo.environment["VOICEINPUT_CURRENT_VERSION"]
             ?? Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
             ?? "0.0.0"
+        let currentBuild = Int(
+            (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "0"
+        ) ?? 0
         let tag = release.tagName.hasPrefix("v") ? String(release.tagName.dropFirst()) : release.tagName
         let current = Version(currentVersion)
         let remote = Version(tag)
+        let remoteBuild = parseBuildFromBody(release.body)
 
+        // Update if remote version is strictly newer,
+        // or same version but a larger build number is declared in release body.
+        let shouldUpdate: Bool
         if remote > current {
+            shouldUpdate = true
+        } else if currentVersion == tag, let rb = remoteBuild, rb > currentBuild {
+            shouldUpdate = true
+        } else {
+            shouldUpdate = false
+        }
+
+        if shouldUpdate {
             let zipAssetURL = release.assets.first { asset in
                 asset.name.hasSuffix(".zip")
             }?.browserDownloadURL
             return .updateAvailable(
                 ReleaseInfo(
                     version: tag,
+                    build: remoteBuild,
                     tag: release.tagName,
                     releaseNotes: release.body,
                     htmlURL: release.htmlURL,
@@ -102,5 +119,25 @@ struct UpdateChecker {
         }
 
         return .upToDate(currentVersion: currentVersion)
+    }
+
+    /// Parse the build number from a release body that contains a line like
+    /// `Build: 2` or `build 2`. Returns nil if no build marker found.
+    private static func parseBuildFromBody(_ body: String) -> Int? {
+        let patterns = [
+            #"(?i)\bbuild[:\s]+(\d+)\b"#,
+            #"(?i)\bbuild\s*#\s*(\d+)\b"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(body.startIndex..<body.endIndex, in: body)
+            if let match = regex.firstMatch(in: body, range: range),
+               match.numberOfRanges >= 2,
+               let numberRange = Range(match.range(at: 1), in: body),
+               let number = Int(body[numberRange]) {
+                return number
+            }
+        }
+        return nil
     }
 }

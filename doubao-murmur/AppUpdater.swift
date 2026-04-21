@@ -172,6 +172,14 @@ final class AppUpdater {
 
         rm -rf "\(targetAppURL.path)"
         mv "\(stagedAppURL.path)" "\(targetAppURL.path)"
+
+        # Mirror Homebrew cask postflight: strip quarantine xattr so Gatekeeper
+        # trusts the freshly-copied ad-hoc signed bundle, and reset Accessibility
+        # TCC so the new signature hash re-registers instead of silently failing
+        # with stale authorization records.
+        /usr/bin/xattr -dr com.apple.quarantine "\(targetAppURL.path)" 2>/dev/null || true
+        /usr/bin/tccutil reset Accessibility com.voiceinput.app 2>/dev/null || true
+
         rm -rf "\(releaseDirectory.path)"
         """
 

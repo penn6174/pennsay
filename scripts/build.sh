@@ -14,8 +14,28 @@ MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
 RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
 INFO_PLIST="$APP_BUNDLE/Contents/Info.plist"
 DEFAULT_VERSION="$(sed -n 's/.*MARKETING_VERSION: "\(.*\)"/\1/p' "$ROOT_DIR/project.yml" | head -n 1)"
-DEFAULT_BUILD_NUMBER="$(sed -n 's/.*CURRENT_PROJECT_VERSION: "\(.*\)"/\1/p' "$ROOT_DIR/project.yml" | head -n 1)"
 VERSION="${PENNSAY_VERSION:-${VOICEINPUT_VERSION:-$DEFAULT_VERSION}}"
+
+# Build number strategy (2026-04-22):
+#   - Monotonically increasing within a given MARKETING_VERSION
+#   - Resets to 1 when MARKETING_VERSION bumps (keyed to tag v${VERSION})
+#   - build = (commits since tag v${VERSION}) + 1
+#   - If the tag does not yet exist (e.g. first build of a new version, or
+#     outside a git checkout), fall back to project.yml's CURRENT_PROJECT_VERSION.
+compute_default_build_number() {
+  local version="$1"
+  local tag="v${version}"
+  if command -v git >/dev/null 2>&1 \
+      && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+      && git -C "$ROOT_DIR" rev-parse "$tag" >/dev/null 2>&1; then
+    local count
+    count=$(git -C "$ROOT_DIR" rev-list "$tag"..HEAD --count 2>/dev/null || echo 0)
+    echo $((count + 1))
+  else
+    sed -n 's/.*CURRENT_PROJECT_VERSION: "\(.*\)"/\1/p' "$ROOT_DIR/project.yml" | head -n 1
+  fi
+}
+DEFAULT_BUILD_NUMBER="$(compute_default_build_number "$VERSION")"
 BUILD_NUMBER="${PENNSAY_BUILD_NUMBER:-${VOICEINPUT_BUILD_NUMBER:-$DEFAULT_BUILD_NUMBER}}"
 
 ensure_build_link() {
