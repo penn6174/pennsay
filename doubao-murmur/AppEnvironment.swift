@@ -1,13 +1,16 @@
 import Foundation
 
 enum AppEnvironment {
-    static let appName = "VoiceInput"
-    static let displayName = "VoiceInput"
+    static let appName = "PennSay"
+    static let displayName = "PennSay"
     static let bundleIdentifier = "com.voiceinput.app"
     static let appSupportDirectoryName = "DoubaoMurmur"
     static let logsDirectoryName = "DoubaoMurmur"
-    static let githubRepoOwner = "penntiao"
-    static let githubRepoName = "voice-input"
+    static let githubRepoOwner = "penn6174"
+    static let githubRepoName = "pennsay"
+    static let madeByLine = "Made by PENN"
+    static let listeningPlaceholder = "\(displayName) 正在聆听…"
+    static let refiningPlaceholder = "\(displayName) 正在润色…"
 
     static var appSupportDirectoryURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!

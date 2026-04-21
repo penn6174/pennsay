@@ -66,7 +66,7 @@ class WebViewManager: NSObject {
             backing: .buffered,
             defer: false
         )
-        window.title = "Doubao Murmur - Login"
+        window.title = "\(AppEnvironment.displayName) - 登录豆包"
         window.contentView = wv
         window.isReleasedWhenClosed = false
         self.webViewWindow = window

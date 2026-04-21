@@ -73,7 +73,7 @@ final class OverlayPanel: NSPanel {
         orderOut(nil)
     }
 
-    func showListening(text: String = "正在聆听…") {
+    func showListening(text: String = AppEnvironment.listeningPlaceholder) {
         stage = .listening
         spinner.isHidden = true
         waveformView.isHidden = false
@@ -81,7 +81,7 @@ final class OverlayPanel: NSPanel {
         showIfNeeded()
     }
 
-    func showRefining(text: String = "Refining…") {
+    func showRefining(text: String = AppEnvironment.refiningPlaceholder) {
         stage = .refining
         spinner.isHidden = false
         spinner.startAnimation(nil)
@@ -209,10 +209,11 @@ final class OverlayPanel: NSPanel {
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
         label.alignment = .left
+        label.autoresizingMask = [.width]
         label.frame = NSRect(
             x: waveformView.frame.maxX + Metrics.interItemSpacing,
             y: 17,
-            width: Metrics.minWidth - waveformView.frame.maxX - Metrics.trailingInset,
+            width: availableLabelWidth(for: Metrics.minWidth),
             height: 22
         )
         visualEffectView.addSubview(label)
@@ -267,8 +268,24 @@ final class OverlayPanel: NSPanel {
         animateToFrame(OverlayPanel.defaultFrame(width: width))
     }
 
+    private func availableLabelWidth(for panelWidth: CGFloat) -> CGFloat {
+        let labelX = waveformView.frame.maxX + Metrics.interItemSpacing
+        return max(panelWidth - labelX - Metrics.trailingInset, 0)
+    }
+
+    private func updateLabelWidth(for panelWidth: CGFloat, animated: Bool = false) {
+        var frame = label.frame
+        frame.size.width = availableLabelWidth(for: panelWidth)
+        if animated {
+            label.animator().frame = frame
+        } else {
+            label.frame = frame
+        }
+    }
+
     private func animateToFrame(_ targetFrame: NSRect) {
         guard isVisible else {
+            updateLabelWidth(for: targetFrame.width)
             setFrame(targetFrame, display: true)
             return
         }
@@ -276,6 +293,7 @@ final class OverlayPanel: NSPanel {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.25
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            updateLabelWidth(for: targetFrame.width, animated: true)
             animator().setFrame(targetFrame, display: true)
         }
         AutomationController.writeState(appState: appState, overlay: currentSnapshot())

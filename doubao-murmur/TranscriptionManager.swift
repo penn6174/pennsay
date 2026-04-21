@@ -88,7 +88,7 @@ final class TranscriptionManager {
                 if self.appState.recordingState == .starting {
                     self.appState.recordingState = .recording
                     self.hotkeyManager.setEscapeHandlingEnabled(true)
-                    self.overlayPanel.showListening(text: self.currentTranscription.isEmpty ? "正在聆听…" : self.currentTranscription)
+                    self.overlayPanel.showListening(text: self.currentTranscription.isEmpty ? AppEnvironment.listeningPlaceholder : self.currentTranscription)
                 }
                 self.log.notice("ASR connection open")
             }
@@ -286,7 +286,7 @@ final class TranscriptionManager {
                 apiKey: settingsStore.apiKey
             ) { [weak self] streamedText in
                 Task { @MainActor in
-                    self?.overlayPanel.updateText(streamedText.isEmpty ? "Refining…" : streamedText)
+                    self?.overlayPanel.updateText(streamedText.isEmpty ? AppEnvironment.refiningPlaceholder : streamedText)
                 }
             }
 
@@ -314,7 +314,7 @@ final class TranscriptionManager {
         }
 
         appState.lastNotification = message
-        NotificationHelper.show(title: "VoiceInput", body: message)
+        NotificationHelper.show(title: AppEnvironment.displayName, body: message)
         log.error("LLM fallback triggered: \(message)")
         overlayPanel.updateText(originalText)
         pasteAndDismiss(originalText)

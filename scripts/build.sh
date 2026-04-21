@@ -3,9 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIGURATION="${1:-Debug}"
-APP_NAME="VoiceInput"
+APP_NAME="PennSay"
+LEGACY_APP_NAME="VoiceInput"
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
-BUILD_ROOT="${VOICEINPUT_BUILD_ROOT:-$HOME/.voiceinput-build}"
+BUILD_ROOT="${PENNSAY_BUILD_ROOT:-${VOICEINPUT_BUILD_ROOT:-$HOME/.voiceinput-build}}"
 BUILD_LINK="$ROOT_DIR/build"
 BUILD_DIR="$BUILD_ROOT/$CONFIGURATION"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
@@ -14,8 +15,8 @@ RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
 INFO_PLIST="$APP_BUNDLE/Contents/Info.plist"
 DEFAULT_VERSION="$(sed -n 's/.*MARKETING_VERSION: "\(.*\)"/\1/p' "$ROOT_DIR/project.yml" | head -n 1)"
 DEFAULT_BUILD_NUMBER="$(sed -n 's/.*CURRENT_PROJECT_VERSION: "\(.*\)"/\1/p' "$ROOT_DIR/project.yml" | head -n 1)"
-VERSION="${VOICEINPUT_VERSION:-$DEFAULT_VERSION}"
-BUILD_NUMBER="${VOICEINPUT_BUILD_NUMBER:-$DEFAULT_BUILD_NUMBER}"
+VERSION="${PENNSAY_VERSION:-${VOICEINPUT_VERSION:-$DEFAULT_VERSION}}"
+BUILD_NUMBER="${PENNSAY_BUILD_NUMBER:-${VOICEINPUT_BUILD_NUMBER:-$DEFAULT_BUILD_NUMBER}}"
 
 ensure_build_link() {
   mkdir -p "$BUILD_ROOT"
@@ -33,7 +34,7 @@ cd "$ROOT_DIR"
 xcodegen generate >/dev/null
 ensure_build_link
 
-rm -rf "$APP_BUNDLE"
+rm -rf "$APP_BUNDLE" "$BUILD_DIR/$LEGACY_APP_NAME.app"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 SWIFT_FLAGS=(

@@ -2,7 +2,7 @@
 import CoreGraphics
 import Foundation
 
-let owner = CommandLine.arguments.dropFirst().first ?? "VoiceInput"
+let owner = CommandLine.arguments.dropFirst().first ?? "PennSay"
 let nameFilter = CommandLine.arguments.dropFirst(2).first
 
 let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []

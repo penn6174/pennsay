@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 
 @main
-struct VoiceInputApp: App {
+struct PennSayApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let appState = AppState.shared
     private let settingsStore = SettingsStore.shared
+    private var autoUpdateScheduler: AutoUpdateScheduler?
     private var webViewManager: WebViewManager!
     private var hotkeyManager: HotkeyManager!
     private var transcriptionManager: TranscriptionManager!
@@ -34,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupWebView()
         setupHotkey()
         setupTranscription()
+        setupAutoUpdateScheduler()
         observeState()
         requestMicrophonePermission()
         applyAutomationLaunchState()
@@ -96,6 +98,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         transcriptionManager.start()
     }
 
+    private func setupAutoUpdateScheduler() {
+        let scheduler = AutoUpdateScheduler(settingsStore: settingsStore, updater: .shared)
+        scheduler.start()
+        autoUpdateScheduler = scheduler
+    }
+
     private func observeState() {
         appState.$loginStatus
             .combineLatest(appState.$recordingState)
@@ -125,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             symbolName = "waveform"
         }
         button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: AppEnvironment.displayName)
+        button.toolTip = AppEnvironment.displayName
     }
 
     private func rebuildMenu() {
@@ -134,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let statusItem = NSMenuItem(title: "状态: \(appState.loginStatus.rawValue)", action: nil, keyEquivalent: "")
         statusItem.isEnabled = false
         menu.addItem(statusItem)
+        menu.addItem(NSMenuItem(title: "关于 \(AppEnvironment.displayName)", action: #selector(showAbout), keyEquivalent: ""))
         menu.addItem(.separator())
 
         if appState.loginStatus != .loggedIn {
@@ -276,6 +286,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showSettings() {
         SettingsWindowController.shared.showWindowAndActivate()
+    }
+
+    @objc private func showAbout() {
+        let alert = NSAlert()
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
+        alert.messageText = AppEnvironment.displayName
+        alert.informativeText = "Version \(version) (\(build))\n\(AppEnvironment.madeByLine)"
+        alert.addButton(withTitle: "好的")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     private func showCapsLockGuideAlert() {

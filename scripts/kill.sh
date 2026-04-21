@@ -1,4 +1,4 @@
 #!/bin/bash
 set -euo pipefail
 
-pkill -f "/VoiceInput.app/Contents/MacOS/VoiceInput" || true
+pkill -f "/PennSay.app/Contents/MacOS/PennSay" || true

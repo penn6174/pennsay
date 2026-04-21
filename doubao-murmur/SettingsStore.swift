@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import ServiceManagement
 
 @MainActor
 final class SettingsStore: ObservableObject {
@@ -10,11 +11,16 @@ final class SettingsStore: ObservableObject {
         static let shortcutMode = "shortcut.mode"
         static let shortcutDoubleTapWindowMs = "shortcut.doubleTapWindowMs"
         static let llmConfiguration = "llm.configuration"
+        static let autoCheckEnabled = "updater.autoCheckEnabled"
+        static let launchAtLogin = "app.launchAtLogin"
+        static let launchAtLoginLastSynced = "app.launchAtLogin.lastSynced"
     }
 
     @Published private(set) var shortcutConfiguration: ShortcutConfiguration
     @Published private(set) var llmConfiguration: LLMConfiguration
     @Published private(set) var apiKey: String
+    @Published private(set) var autoCheckUpdatesEnabled: Bool
+    @Published private(set) var launchAtLoginEnabled: Bool
 
     private let defaults: UserDefaults
 
@@ -32,6 +38,8 @@ final class SettingsStore: ObservableObject {
             mode: mode,
             doubleTapWindowMs: doubleTap
         )
+        autoCheckUpdatesEnabled = defaults.object(forKey: Keys.autoCheckEnabled) as? Bool ?? true
+        launchAtLoginEnabled = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
 
         if let data = defaults.data(forKey: Keys.llmConfiguration),
            let config = try? JSONDecoder().decode(LLMConfiguration.self, from: data) {
@@ -45,6 +53,8 @@ final class SettingsStore: ObservableObject {
             llmConfiguration.isEnabled = false
             persistLLMConfiguration()
         }
+
+        reconcileLaunchAtLoginPreference()
     }
 
     var isLLMReady: Bool {
@@ -60,6 +70,23 @@ final class SettingsStore: ObservableObject {
 
     func llmDraft() -> LLMSettingsDraft {
         LLMSettingsDraft(configuration: llmConfiguration, apiKey: apiKey)
+    }
+
+    func setAutoCheckUpdatesEnabled(_ enabled: Bool) {
+        autoCheckUpdatesEnabled = enabled
+        defaults.set(enabled, forKey: Keys.autoCheckEnabled)
+    }
+
+    func setLaunchAtLoginEnabled(_ enabled: Bool) throws {
+        if #available(macOS 13.0, *) {
+            let service = SMAppService.mainApp
+            if enabled {
+                try service.register()
+            } else {
+                try service.unregister()
+            }
+        }
+        persistLaunchAtLoginState(enabled)
     }
 
     func saveLLMConfiguration(from draft: LLMSettingsDraft) throws {
@@ -96,5 +123,44 @@ final class SettingsStore: ObservableObject {
     private func persistLLMConfiguration() {
         guard let data = try? JSONEncoder().encode(llmConfiguration) else { return }
         defaults.set(data, forKey: Keys.llmConfiguration)
+    }
+
+    private func reconcileLaunchAtLoginPreference() {
+        guard #available(macOS 13.0, *) else {
+            persistLaunchAtLoginState(false)
+            return
+        }
+
+        let service = SMAppService.mainApp
+        let actualEnabled = service.status == .enabled || service.status == .requiresApproval
+        let storedEnabled = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
+        let lastSyncedEnabled = defaults.object(forKey: Keys.launchAtLoginLastSynced) as? Bool ?? actualEnabled
+
+        do {
+            if storedEnabled != lastSyncedEnabled {
+                if storedEnabled {
+                    try service.register()
+                } else {
+                    try service.unregister()
+                }
+            }
+        } catch {
+            let resolvedEnabled = service.status == .enabled || service.status == .requiresApproval
+            persistLaunchAtLoginState(resolvedEnabled)
+            return
+        }
+
+        let resolvedEnabled = service.status == .enabled || service.status == .requiresApproval
+        if storedEnabled != resolvedEnabled {
+            persistLaunchAtLoginState(resolvedEnabled)
+        } else {
+            persistLaunchAtLoginState(storedEnabled)
+        }
+    }
+
+    private func persistLaunchAtLoginState(_ enabled: Bool) {
+        launchAtLoginEnabled = enabled
+        defaults.set(enabled, forKey: Keys.launchAtLogin)
+        defaults.set(enabled, forKey: Keys.launchAtLoginLastSynced)
     }
 }

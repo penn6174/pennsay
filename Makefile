@@ -1,4 +1,4 @@
-APP_NAME := VoiceInput
+APP_NAME := PennSay
 BUILD_ROOT ?= $(HOME)/.voiceinput-build
 
 .PHONY: build run release install clean
@@ -18,4 +18,4 @@ install:
 	cp -R build/Release/$(APP_NAME).app /Applications/$(APP_NAME).app
 
 clean:
-	rm -rf build "$(BUILD_ROOT)" .build .tmp doubao-murmur.xcodeproj VoiceInput.xcodeproj
+	rm -rf build "$(BUILD_ROOT)" .build .tmp doubao-murmur.xcodeproj PennSay.xcodeproj VoiceInput.xcodeproj

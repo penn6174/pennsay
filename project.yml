@@ -1,4 +1,4 @@
-name: VoiceInput
+name: PennSay
 options:
   bundleIdPrefix: com.voiceinput
   deploymentTarget:
@@ -15,7 +15,7 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 targets:
-  VoiceInput:
+  PennSay:
     type: application
     platform: macOS
     sources:
@@ -29,7 +29,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: doubao-murmur/doubao-murmur.entitlements
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
-        PRODUCT_NAME: "VoiceInput"
+        PRODUCT_NAME: "PennSay"
         COMBINE_HIDPI_IMAGES: true
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
         LD_RUNPATH_SEARCH_PATHS:
@@ -38,9 +38,9 @@ targets:
       path: doubao-murmur/Info.plist
       properties:
         LSUIElement: true
-        NSMicrophoneUsageDescription: "VoiceInput needs microphone access to capture speech for transcription."
-        CFBundleName: "VoiceInput"
-        CFBundleDisplayName: "VoiceInput"
+        NSMicrophoneUsageDescription: "PennSay needs microphone access to capture speech for transcription."
+        CFBundleName: "PennSay"
+        CFBundleDisplayName: "PennSay"
         CFBundleIconFile: "AppIcon"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"

@@ -1,4 +1,4 @@
-name: Release VoiceInput
+name: Release PennSay
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: macos-15
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,8 +24,8 @@ jobs:
       - name: Extract version from tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          echo "VOICEINPUT_VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "VOICEINPUT_BUILD_NUMBER=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "PENNSAY_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "PENNSAY_BUILD_NUMBER=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
 
       - name: Build release artifacts
         run: make release
@@ -33,14 +33,14 @@ jobs:
       - name: Upload versioned app bundle
         uses: actions/upload-artifact@v4
         with:
-          name: VoiceInput-app-bundle
-          path: build/VoiceInput-v${{ env.VOICEINPUT_VERSION }}.app
+          name: PennSay-app-bundle
+          path: build/PennSay-v${{ env.PENNSAY_VERSION }}.app
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            build/VoiceInput-v${{ env.VOICEINPUT_VERSION }}.zip
-            build/VoiceInput-v${{ env.VOICEINPUT_VERSION }}.dmg
-            build/VoiceInput-v${{ env.VOICEINPUT_VERSION }}.sha256
+            build/PennSay-v${{ env.PENNSAY_VERSION }}.zip
+            build/PennSay-v${{ env.PENNSAY_VERSION }}.dmg
+            build/PennSay-v${{ env.PENNSAY_VERSION }}.sha256

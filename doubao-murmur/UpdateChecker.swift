@@ -5,6 +5,7 @@ struct ReleaseInfo: Sendable {
     let tag: String
     let releaseNotes: String
     let htmlURL: URL
+    let zipAssetURL: URL?
 }
 
 enum UpdateCheckResult: Sendable {
@@ -31,14 +32,26 @@ enum UpdateCheckError: LocalizedError {
 
 struct UpdateChecker {
     private struct GitHubRelease: Decodable {
+        struct Asset: Decodable {
+            let name: String
+            let browserDownloadURL: URL
+
+            enum CodingKeys: String, CodingKey {
+                case name
+                case browserDownloadURL = "browser_download_url"
+            }
+        }
+
         let tagName: String
         let body: String
         let htmlURL: URL
+        let assets: [Asset]
 
         enum CodingKeys: String, CodingKey {
             case tagName = "tag_name"
             case body
             case htmlURL = "html_url"
+            case assets
         }
     }
 
@@ -74,12 +87,16 @@ struct UpdateChecker {
         let remote = Version(tag)
 
         if remote > current {
+            let zipAssetURL = release.assets.first { asset in
+                asset.name.hasSuffix(".zip")
+            }?.browserDownloadURL
             return .updateAvailable(
                 ReleaseInfo(
                     version: tag,
                     tag: release.tagName,
                     releaseNotes: release.body,
-                    htmlURL: release.htmlURL
+                    htmlURL: release.htmlURL,
+                    zipAssetURL: zipAssetURL
                 )
             )
         }

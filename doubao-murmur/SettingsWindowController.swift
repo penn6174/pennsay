@@ -9,7 +9,7 @@ final class SettingsWindowController: NSWindowController {
         let rootView = SettingsRootView(store: .shared)
         let hostingController = NSHostingController(rootView: rootView)
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "Settings"
+        window.title = "\(AppEnvironment.displayName) Settings"
         window.setContentSize(NSSize(width: 700, height: 520))
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.center()
@@ -46,30 +46,66 @@ private struct SettingsRootView: View {
 
 private struct GeneralSettingsView: View {
     @ObservedObject var store: SettingsStore
+    @State private var launchAtLoginError = ""
+    @State private var showLaunchAtLoginError = false
 
     var body: some View {
-        Form {
-            Section("Status") {
-                LabeledContent("登录状态", value: AppState.shared.loginStatus.rawValue)
-                LabeledContent("快捷键", value: store.shortcutConfiguration.triggerKey.displayName)
-                LabeledContent("模式", value: store.shortcutConfiguration.mode.displayName)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            Form {
+                Section("Status") {
+                    LabeledContent("登录状态", value: AppState.shared.loginStatus.rawValue)
+                    LabeledContent("快捷键", value: store.shortcutConfiguration.triggerKey.displayName)
+                    LabeledContent("模式", value: store.shortcutConfiguration.mode.displayName)
+                }
 
-            Section("Logs") {
-                Text(AppEnvironment.logsDirectoryURL.path)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .textSelection(.enabled)
-                Button("打开日志文件夹") {
-                    NSWorkspace.shared.open(AppEnvironment.ensureLogsDirectoryExists())
+                Section("Startup") {
+                    Toggle(
+                        "自动检查更新",
+                        isOn: Binding(
+                            get: { store.autoCheckUpdatesEnabled },
+                            set: { store.setAutoCheckUpdatesEnabled($0) }
+                        )
+                    )
+                    Toggle(
+                        "登录时启动 \(AppEnvironment.displayName)",
+                        isOn: Binding(
+                            get: { store.launchAtLoginEnabled },
+                            set: { newValue in
+                                do {
+                                    try store.setLaunchAtLoginEnabled(newValue)
+                                } catch {
+                                    launchAtLoginError = error.localizedDescription
+                                    showLaunchAtLoginError = true
+                                }
+                            }
+                        )
+                    )
+                }
+
+                Section("Logs") {
+                    Text(AppEnvironment.logsDirectoryURL.path)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .textSelection(.enabled)
+                    Button("打开日志文件夹") {
+                        NSWorkspace.shared.open(AppEnvironment.ensureLogsDirectoryExists())
+                    }
+                }
+
+                Section("Version") {
+                    LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0")
+                    LabeledContent("Build", value: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0")
                 }
             }
+            .formStyle(.grouped)
 
-            Section("Version") {
-                LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0")
-                LabeledContent("Build", value: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0")
-            }
+            Text(AppEnvironment.madeByLine)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .formStyle(.grouped)
+        .alert("登录时启动设置失败", isPresented: $showLaunchAtLoginError) {
+            Button("好的", role: .cancel) {}
+        } message: {
+            Text(launchAtLoginError)
+        }
     }
 }
 
