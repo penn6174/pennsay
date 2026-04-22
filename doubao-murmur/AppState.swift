@@ -23,6 +23,7 @@ class AppState: ObservableObject {
     @Published var recordingState: RecordingState = .idle
     @Published var currentText: String = ""
     @Published var lastNotification: String?
+    @Published var availableUpdate: ReleaseInfo?
 
     var isRecording: Bool {
         switch recordingState {
@@ -33,9 +34,18 @@ class AppState: ObservableObject {
         }
     }
 
+    var hasAvailableUpdate: Bool {
+        availableUpdate != nil
+    }
+
+    var availableUpdateBadgeCount: Int {
+        hasAvailableUpdate ? 1 : 0
+    }
+
     func reset() {
         recordingState = .idle
         currentText = ""
         lastNotification = nil
+        availableUpdate = nil
     }
 }

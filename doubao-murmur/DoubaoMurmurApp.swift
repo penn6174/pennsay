@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let log = AppLog(category: "AppDelegate")
 
     private var statusItem: NSStatusItem!
+    private let updateBadgeView = StatusBadgeView()
     private let appState = AppState.shared
     private let settingsStore = SettingsStore.shared
     private let diagnosticsManager = SupportDiagnosticsManager.shared
@@ -121,7 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setupAutoUpdateScheduler() {
-        let scheduler = AutoUpdateScheduler(settingsStore: settingsStore, updater: .shared)
+        let scheduler = AutoUpdateScheduler(
+            settingsStore: settingsStore,
+            updater: .shared,
+            appState: appState
+        )
         scheduler.start()
         autoUpdateScheduler = scheduler
     }
@@ -131,14 +136,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .combineLatest(appState.$recordingState)
             .receive(on: RunLoop.main)
             .sink { [weak self] _, _ in
-                self?.updateStatusButton()
-                self?.rebuildMenu()
-                guard let self else { return }
-                AutomationController.writeState(
-                    appState: self.appState,
-                    overlay: self.overlayPanel.currentSnapshot(),
-                    settingsStore: self.settingsStore
-                )
+                self?.refreshStatusUI()
+            }
+            .store(in: &cancellables)
+
+        appState.$availableUpdate
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.refreshStatusUI()
             }
             .store(in: &cancellables)
     }
@@ -156,6 +161,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: AppEnvironment.displayName)
         button.toolTip = AppEnvironment.displayName
+        configureStatusBadge(on: button)
+        updateBadgeView.count = appState.availableUpdateBadgeCount
+    }
+
+    private func configureStatusBadge(on button: NSStatusBarButton) {
+        guard updateBadgeView.superview == nil else { return }
+        updateBadgeView.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(updateBadgeView)
+        NSLayoutConstraint.activate([
+            updateBadgeView.widthAnchor.constraint(equalToConstant: 14),
+            updateBadgeView.heightAnchor.constraint(equalToConstant: 14),
+            updateBadgeView.topAnchor.constraint(equalTo: button.topAnchor, constant: 1),
+            updateBadgeView.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -1)
+        ])
+    }
+
+    private func refreshStatusUI() {
+        updateStatusButton()
+        rebuildMenu()
+        AutomationController.writeState(
+            appState: appState,
+            overlay: overlayPanel.currentSnapshot(),
+            settingsStore: settingsStore
+        )
     }
 
     private func rebuildMenu() {
@@ -182,6 +211,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(supportItem)
 
         let updateItem = NSMenuItem(title: "检查更新", action: #selector(checkForUpdates), keyEquivalent: "u")
+        if appState.hasAvailableUpdate {
+            updateItem.image = Self.makeMenuBadgeImage(count: appState.availableUpdateBadgeCount)
+        }
         menu.addItem(updateItem)
 
         let uninstallItem = NSMenuItem(title: "卸载并退出", action: #selector(uninstallAndQuit), keyEquivalent: "")
@@ -414,6 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let result = try await UpdateChecker.checkLatest()
                 switch result {
                 case .upToDate(let currentVersion):
+                    appState.availableUpdate = nil
                     let alert = NSAlert()
                     alert.messageText = "检查更新"
                     alert.informativeText = "已是最新 v\(currentVersion)"
@@ -421,6 +454,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     NSApp.activate(ignoringOtherApps: true)
                     alert.runModal()
                 case .updateAvailable(let release):
+                    appState.availableUpdate = release
                     // 优先走应用内自动下载 + 退出时替换路径；仅在 /Applications
                     // 不可写等情况下 fallback 到打开 Release 页面
                     let updater = AppUpdater.shared
@@ -429,9 +463,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     alert.messageText = "发现新版本 v\(release.version)"
                     if canSilent {
                         alert.informativeText = (release.releaseNotes.isEmpty
-                            ? "下载后 Cmd+Q 退出 \(AppEnvironment.displayName)，重新打开即为新版本。"
-                            : release.releaseNotes + "\n\n下载后 Cmd+Q 退出 \(AppEnvironment.displayName)，重新打开即为新版本。")
-                        alert.addButton(withTitle: "下载并准备")
+                            ? "现在下载后会自动退出并重新打开 \(AppEnvironment.displayName)。自动检查更新仍保持“只准备、不打断工作”的旧策略。"
+                            : release.releaseNotes + "\n\n现在下载后会自动退出并重新打开 \(AppEnvironment.displayName)。自动检查更新仍保持“只准备、不打断工作”的旧策略。")
+                        alert.addButton(withTitle: "下载并立即重启")
                         alert.addButton(withTitle: "稍后")
                     } else {
                         alert.informativeText = release.releaseNotes.isEmpty
@@ -448,11 +482,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                             let body: String
                             switch result {
                             case .prepared:
-                                body = "\(AppEnvironment.displayName) 新版已下载好，Cmd+Q 退出后重新打开生效"
+                                body = "\(AppEnvironment.displayName) 新版已下载好，正在自动重启完成更新"
                             case .alreadyPrepared:
-                                body = "新版本已在待安装队列，Cmd+Q 退出后重新打开生效"
+                                body = "新版本已在待安装队列，正在自动重启完成更新"
                             }
                             NotificationHelper.show(title: AppEnvironment.displayName, body: body)
+                            try updater.scheduleRelaunchAfterTermination()
+                            appState.availableUpdate = nil
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                NSApp.terminate(nil)
+                            }
                         } catch {
                             log.error("manual update preparation failed: \(error.localizedDescription)")
                             let failAlert = NSAlert()
@@ -509,5 +548,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         rebuildMenu()
+    }
+
+    private static func makeMenuBadgeImage(count: Int) -> NSImage? {
+        guard count > 0 else { return nil }
+        let text = "\(count)"
+        let size = NSSize(width: 14, height: 14)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        NSColor.systemRed.setFill()
+        NSBezierPath(ovalIn: NSRect(origin: .zero, size: size)).fill()
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let attributes: [NSAttributedString.Key: Any] = [
+            .foregroundColor: NSColor.white,
+            .font: NSFont.systemFont(ofSize: 9, weight: .bold),
+            .paragraphStyle: paragraph
+        ]
+        let rect = NSRect(x: 0, y: 1, width: size.width, height: size.height)
+        (text as NSString).draw(in: rect, withAttributes: attributes)
+        image.unlockFocus()
+        return image
+    }
+}
+
+private final class StatusBadgeView: NSView {
+    private let textField = NSTextField(labelWithString: "")
+
+    var count: Int = 0 {
+        didSet {
+            isHidden = count <= 0
+            textField.stringValue = "\(count)"
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.systemRed.cgColor
+        layer?.cornerRadius = 7
+        isHidden = true
+
+        textField.translatesAutoresizingMaskIntoConstraints = false
+        textField.alignment = .center
+        textField.textColor = .white
+        textField.font = .systemFont(ofSize: 9, weight: .bold)
+        addSubview(textField)
+
+        NSLayoutConstraint.activate([
+            textField.centerXAnchor.constraint(equalTo: centerXAnchor),
+            textField.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -0.5)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        return nil
     }
 }

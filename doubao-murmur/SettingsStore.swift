@@ -10,11 +10,16 @@ final class SettingsStore: ObservableObject {
         static let shortcutTriggerKey = "shortcut.triggerKey"
         static let shortcutMode = "shortcut.mode"
         static let shortcutDoubleTapWindowMs = "shortcut.doubleTapWindowMs"
+        static let shortcutDefaultsVersion = "shortcut.defaultsVersion"
         static let llmConfiguration = "llm.configuration"
         static let systemPromptVersion = "llm.systemPromptVersion"
         static let autoCheckEnabled = "updater.autoCheckEnabled"
         static let launchAtLogin = "app.launchAtLogin"
         static let launchAtLoginLastSynced = "app.launchAtLogin.lastSynced"
+    }
+
+    private enum ShortcutDefaults {
+        static let currentVersion = 2
     }
 
     @Published private(set) var shortcutConfiguration: ShortcutConfiguration
@@ -50,6 +55,7 @@ final class SettingsStore: ObservableObject {
         }
 
         apiKey = KeychainStore.readAPIKey()
+        migrateShortcutDefaultsIfNeeded()
         migrateSystemPromptIfNeeded()
         if apiKey.isEmpty, llmConfiguration.isEnabled {
             llmConfiguration.isEnabled = false
@@ -68,6 +74,7 @@ final class SettingsStore: ObservableObject {
         defaults.set(configuration.triggerKey.rawValue, forKey: Keys.shortcutTriggerKey)
         defaults.set(configuration.mode.rawValue, forKey: Keys.shortcutMode)
         defaults.set(configuration.doubleTapWindowMs, forKey: Keys.shortcutDoubleTapWindowMs)
+        defaults.set(ShortcutDefaults.currentVersion, forKey: Keys.shortcutDefaultsVersion)
     }
 
     func llmDraft() -> LLMSettingsDraft {
@@ -147,6 +154,18 @@ final class SettingsStore: ObservableObject {
         }
 
         defaults.set(LLMConfiguration.currentSystemPromptVersion, forKey: Keys.systemPromptVersion)
+    }
+
+    private func migrateShortcutDefaultsIfNeeded() {
+        let storedVersion = defaults.object(forKey: Keys.shortcutDefaultsVersion) as? Int ?? 0
+        guard storedVersion < ShortcutDefaults.currentVersion else { return }
+
+        if shortcutConfiguration.doubleTapWindowMs == ShortcutConfiguration.previousDefaultDoubleTapWindowMs {
+            shortcutConfiguration.doubleTapWindowMs = ShortcutConfiguration.defaultDoubleTapWindowMs
+            defaults.set(shortcutConfiguration.doubleTapWindowMs, forKey: Keys.shortcutDoubleTapWindowMs)
+        }
+
+        defaults.set(ShortcutDefaults.currentVersion, forKey: Keys.shortcutDefaultsVersion)
     }
 
     private func reconcileLaunchAtLoginPreference() {

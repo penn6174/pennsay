@@ -11,6 +11,7 @@ final class AutoUpdateScheduler {
     private let log = AppLog(category: "AutoUpdateScheduler")
     private let settingsStore: SettingsStore
     private let updater: AppUpdater
+    private let appState: AppState
     private let defaults: UserDefaults
     private let timerQueue = DispatchQueue(label: "pennsay.auto-update-scheduler", qos: .utility)
 
@@ -23,10 +24,12 @@ final class AutoUpdateScheduler {
     init(
         settingsStore: SettingsStore,
         updater: AppUpdater,
+        appState: AppState,
         defaults: UserDefaults = .standard
     ) {
         self.settingsStore = settingsStore
         self.updater = updater
+        self.appState = appState
         self.defaults = defaults
     }
 
@@ -144,8 +147,10 @@ final class AutoUpdateScheduler {
             let result = try await UpdateChecker.checkLatest()
             switch result {
             case .upToDate:
+                appState.availableUpdate = nil
                 log.info("automatic update check (\(reason)) found no newer release")
             case let .updateAvailable(release):
+                appState.availableUpdate = release
                 log.notice("automatic update check (\(reason)) found v\(release.version)")
                 if updater.canPrepareSilently(for: release) {
                     let preparationResult = try await updater.prepareUpdateIfNeeded(release: release)

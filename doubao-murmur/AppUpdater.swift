@@ -14,6 +14,7 @@ final class AppUpdater {
         case destinationNotWritable
         case unzipFailed
         case extractedAppMissing
+        case relaunchScriptFailed
 
         var errorDescription: String? {
             switch self {
@@ -27,6 +28,8 @@ final class AppUpdater {
                 return "解压更新包失败。"
             case .extractedAppMissing:
                 return "更新包中未找到应用程序。"
+            case .relaunchScriptFailed:
+                return "无法创建自动重启脚本。"
             }
         }
     }
@@ -126,6 +129,51 @@ final class AppUpdater {
         defaults.set(release.tag, forKey: Keys.preparedTag)
         log.notice("prepared update \(release.tag) for install on next app restart")
         return .prepared
+    }
+
+    func scheduleRelaunchAfterTermination() throws {
+        guard let appBundleURL = Bundle.main.bundleURL.standardizedFileURL as URL? else {
+            throw UpdateError.bundlePathUnavailable
+        }
+
+        let scriptURL = fileManager.temporaryDirectory.appendingPathComponent(
+            "pennsay-relaunch-\(UUID().uuidString).sh",
+            isDirectory: false
+        )
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let script = """
+        #!/bin/bash
+        set -euo pipefail
+
+        while kill -0 \(pid) 2>/dev/null; do
+          sleep 1
+        done
+
+        for _ in $(seq 1 60); do
+          if [[ -d "\(appBundleURL.path)" ]]; then
+            open "\(appBundleURL.path)"
+            rm -f "$0"
+            exit 0
+          fi
+          sleep 1
+        done
+
+        rm -f "$0"
+        exit 1
+        """
+
+        do {
+            try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+        } catch {
+            throw UpdateError.relaunchScriptFailed
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptURL.path]
+        try process.run()
+        log.notice("scheduled relaunch helper for post-update restart")
     }
 
     private func clearPreparedStateIfCurrentVersionMatches() {

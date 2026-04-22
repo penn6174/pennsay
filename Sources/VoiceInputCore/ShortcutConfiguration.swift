@@ -74,7 +74,8 @@ public enum ShortcutMode: String, CaseIterable, Codable, Sendable, Identifiable 
 public struct ShortcutConfiguration: Codable, Equatable, Sendable {
     public static let minimumDoubleTapWindowMs = 150
     public static let maximumDoubleTapWindowMs = 500
-    public static let defaultDoubleTapWindowMs = 300
+    public static let defaultDoubleTapWindowMs = 200
+    public static let previousDefaultDoubleTapWindowMs = 300
 
     public var triggerKey: ShortcutTriggerKey
     public var mode: ShortcutMode
