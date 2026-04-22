@@ -36,6 +36,7 @@
 		F84F3978C96D49EB5BD460AB /* TranscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20C2871840F94A834A8A63EE /* TranscriptionManager.swift */; };
 		F95731168096EF041A88923F /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C0611F7EF2450AFA5DA8402 /* SettingsStore.swift */; };
 		FB129B71A9D25342AD16916A /* OverlayPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126E3ED0C41A8B07107D2088 /* OverlayPanel.swift */; };
+		FD1A3038B6F3C1D9D029E2D5 /* SupportDiagnosticsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CEFA881364C5A3A62902BBB /* SupportDiagnosticsManager.swift */; };
 		FFB0F545A64F560FCAAE67F6 /* ASRParamsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEFC30CA5827184809C30CA8 /* ASRParamsStore.swift */; };
 /* End PBXBuildFile section */
 
@@ -64,6 +65,7 @@
 		83830855BFF86B624904B388 /* PennSay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PennSay.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9C0611F7EF2450AFA5DA8402 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		9C97BC1130A61743A37C11C5 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		9CEFA881364C5A3A62902BBB /* SupportDiagnosticsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupportDiagnosticsManager.swift; sourceTree = "<group>"; };
 		AC90109D42A1E3013A31AEA5 /* Version.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Version.swift; sourceTree = "<group>"; };
 		BD4392E625C193DD1FEE541C /* inject-dom.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "inject-dom.js"; sourceTree = "<group>"; };
 		BD64CF85BF08C34930A56AA1 /* AutoUpdateScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoUpdateScheduler.swift; sourceTree = "<group>"; };
@@ -139,6 +141,7 @@
 				1802C446A14F809045CD68D3 /* PasteHelper.swift */,
 				9C0611F7EF2450AFA5DA8402 /* SettingsStore.swift */,
 				71834F930D97BAEF6D3BCD51 /* SettingsWindowController.swift */,
+				9CEFA881364C5A3A62902BBB /* SupportDiagnosticsManager.swift */,
 				20C2871840F94A834A8A63EE /* TranscriptionManager.swift */,
 				C4DEB947895E4281B95C214B /* UninstallManager.swift */,
 				20BB142CAC6F255DA9BE3908 /* UpdateChecker.swift */,
@@ -241,6 +244,7 @@
 				F95731168096EF041A88923F /* SettingsStore.swift in Sources */,
 				14FB17328A949508889BF546 /* SettingsWindowController.swift in Sources */,
 				B8D31C2A80B826EF1E69AC4D /* ShortcutConfiguration.swift in Sources */,
+				FD1A3038B6F3C1D9D029E2D5 /* SupportDiagnosticsManager.swift in Sources */,
 				F84F3978C96D49EB5BD460AB /* TranscriptionManager.swift in Sources */,
 				F558ED8033CB5A699BFCB1E8 /* UninstallManager.swift in Sources */,
 				D507571787B6F980B708AB0A /* UpdateChecker.swift in Sources */,
@@ -323,7 +327,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.3;
+				MARKETING_VERSION = 1.0.4;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -400,7 +404,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.3;
+				MARKETING_VERSION = 1.0.4;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.voiceinput.app;

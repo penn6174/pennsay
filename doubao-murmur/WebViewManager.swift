@@ -11,6 +11,7 @@ private class AlwaysActiveWindow: NSWindow {
 
 @MainActor
 class WebViewManager: NSObject {
+    private let log = AppLog(category: "WebViewManager")
     private let appState: AppState
     private var webView: WKWebView?
     private var webViewWindow: NSWindow?
@@ -78,12 +79,12 @@ class WebViewManager: NSObject {
     /// desktop level and excluding it from Mission Control / Cmd+Tab.
     private func enterBackgroundMode() {
         guard let window = webViewWindow else { return }
+        logWindowState("enterBackgroundMode(before)")
         window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
         window.collectionBehavior = [.transient, .ignoresCycle]
         window.ignoresMouseEvents = true
-        if !window.isVisible {
-            window.orderBack(nil)
-        }
+        window.orderBack(nil)
+        logWindowState("enterBackgroundMode(after)")
     }
 
     private func loadJSResource(_ name: String) -> String? {
@@ -92,6 +93,23 @@ class WebViewManager: NSObject {
             return nil
         }
         return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func restoreForegroundMode(for window: NSWindow) {
+        window.level = .normal
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        window.ignoresMouseEvents = false
+    }
+
+    private func logWindowState(_ context: String) {
+        guard let window = webViewWindow else {
+            log.notice("\(context) window=nil appActive=\(NSApp.isActive)")
+            return
+        }
+
+        log.notice(
+            "\(context) visible=\(window.isVisible) level=\(window.level.rawValue) mouseIgnored=\(window.ignoresMouseEvents) key=\(window.isKeyWindow) main=\(window.isMainWindow) appActive=\(NSApp.isActive) collection=\(window.collectionBehavior.rawValue)"
+        )
     }
 
     // MARK: - Public API
@@ -120,12 +138,25 @@ class WebViewManager: NSObject {
             load()
         }
         guard let window = webViewWindow else { return }
-        window.level = .normal
-        window.collectionBehavior = []
-        window.ignoresMouseEvents = false
+        logWindowState("showLoginWindow(before)")
+        window.orderOut(nil)
+        restoreForegroundMode(for: window)
         window.center()
-        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
+        _ = window.makeFirstResponder(webView)
+        logWindowState("showLoginWindow(immediate)")
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.webViewWindow else { return }
+            self.restoreForegroundMode(for: window)
+            NSApp.activate(ignoringOtherApps: true)
+            window.orderFrontRegardless()
+            window.makeKeyAndOrderFront(nil)
+            _ = window.makeFirstResponder(self.webView)
+            self.logWindowState("showLoginWindow(settled)")
+        }
     }
 
     func hideLoginWindow() {

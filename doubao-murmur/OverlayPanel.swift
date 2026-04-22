@@ -22,19 +22,21 @@ enum OverlayStage: String {
 
 final class OverlayPanel: NSPanel {
     private enum Metrics {
-        static let height: CGFloat = 56
-        static let minWidth: CGFloat = 160
+        static let height: CGFloat = 48
+        static let minWidth: CGFloat = 140
         static var maxWidth: CGFloat {
             let screenWidth = NSScreen.main?.visibleFrame.width ?? 1600
             return screenWidth * 0.7
         }
         static let bottomInset: CGFloat = 80
-        static let cornerRadius: CGFloat = 28
-        static let leadingInset: CGFloat = 16
-        static let trailingInset: CGFloat = 20
-        static let indicatorWidth: CGFloat = 44
-        static let indicatorHeight: CGFloat = 32
-        static let interItemSpacing: CGFloat = 12
+        static let cornerRadius: CGFloat = 24
+        static let leadingInset: CGFloat = 13
+        static let trailingInset: CGFloat = 16
+        static let indicatorWidth: CGFloat = 40
+        static let indicatorHeight: CGFloat = 28
+        static let interItemSpacing: CGFloat = 9
+        static let labelFontSize: CGFloat = 12
+        static let labelHeight: CGFloat = 18
     }
 
     private let visualEffectView = NSVisualEffectView()
@@ -207,7 +209,7 @@ final class OverlayPanel: NSPanel {
         spinner.isHidden = true
         visualEffectView.addSubview(spinner)
 
-        label.font = .systemFont(ofSize: 16, weight: .medium)
+        label.font = .systemFont(ofSize: Metrics.labelFontSize, weight: .medium)
         label.textColor = .labelColor
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
@@ -215,9 +217,9 @@ final class OverlayPanel: NSPanel {
         label.autoresizingMask = [.width]
         label.frame = NSRect(
             x: waveformView.frame.maxX + Metrics.interItemSpacing,
-            y: 17,
+            y: (Metrics.height - Metrics.labelHeight) / 2,
             width: availableLabelWidth(for: Metrics.minWidth),
-            height: 22
+            height: Metrics.labelHeight
         )
         visualEffectView.addSubview(label)
     }

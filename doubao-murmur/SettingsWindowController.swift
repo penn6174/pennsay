@@ -91,6 +91,14 @@ private struct GeneralSettingsView: View {
                     }
                 }
 
+                Section("Support") {
+                    Text(AppEnvironment.supportEmail)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .textSelection(.enabled)
+                    Text("崩溃、卡死、重启后异常或识别错误时，可通过菜单栏“联系支持并附带日志...”生成邮件草稿。")
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Version") {
                     LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0")
                     LabeledContent("Build", value: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0")
