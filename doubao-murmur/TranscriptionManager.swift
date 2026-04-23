@@ -25,6 +25,11 @@ final class TranscriptionManager {
     private var finalStabilityWorkItem: DispatchWorkItem?
     private var finalHardTimeoutWorkItem: DispatchWorkItem?
     private var targetApplication: NSRunningApplication?
+    /// A buffered-capture session is running: microphone is capturing into
+    /// an in-memory ring buffer, but no HUD is visible and no ASR connection
+    /// has been opened. Resolved by `commitBufferedSession` (promote to real
+    /// recording) or `discardBufferedSession` (drop and stop).
+    private var bufferedSessionActive = false
 
     private let stopTailCaptureDelay: TimeInterval = 0.20
     private let finalStabilityDelay: TimeInterval = 0.60
@@ -79,6 +84,12 @@ final class TranscriptionManager {
             Task { @MainActor in
                 guard let self else { return }
                 switch event {
+                case .beginBuffering:
+                    self.beginBufferedSession()
+                case .commitHold:
+                    self.commitBufferedSession()
+                case .discardBuffered:
+                    self.discardBufferedSession()
                 case .startRecording:
                     self.startRecording()
                 case .stopRecording:
@@ -195,6 +206,118 @@ final class TranscriptionManager {
         case .stopping, .refining:
             break
         }
+    }
+
+    // MARK: - Buffered session (Hold with delayed commit)
+
+    /// Trigger key went down. Start the microphone in buffered mode — audio
+    /// is retained in memory but no HUD shows and no ASR is opened. If the
+    /// user keeps holding past `holdCommitDelay`, `commitBufferedSession`
+    /// promotes this to a real recording. If they release early (tap /
+    /// double-tap), `discardBufferedSession` throws it away.
+    private func beginBufferedSession() {
+        guard appState.recordingState == .idle else { return }
+        guard !bufferedSessionActive else { return }
+        guard appState.loginStatus == .loggedIn else { return }
+
+        if !AutomationController.isEnabled {
+            switch AVCaptureDevice.authorizationStatus(for: .audio) {
+            case .authorized:
+                break
+            case .notDetermined, .denied, .restricted:
+                // Without microphone permission buffered capture would fail.
+                // Skip buffering; `commitBufferedSession` will fall through
+                // to the full `startRecording()` path which handles the
+                // permission prompt / denial UI.
+                return
+            @unknown default:
+                return
+            }
+        }
+
+        do {
+            try audioCapture.startBuffered(maxBufferMilliseconds: hotkeyManager.bufferedCaptureMilliseconds)
+            bufferedSessionActive = true
+            log.notice("begin buffered session (max \(hotkeyManager.bufferedCaptureMilliseconds)ms)")
+        } catch {
+            log.error("buffered capture failed: \(error.localizedDescription)")
+            bufferedSessionActive = false
+        }
+    }
+
+    /// Trigger key stayed down past `holdCommitDelay`. Promote the buffered
+    /// capture to a real recording: connect ASR, flush buffered audio into
+    /// the live pipeline, and show the HUD.
+    private func commitBufferedSession() {
+        guard bufferedSessionActive else {
+            // Buffered capture never started (permissions, login, etc.).
+            // Fall back to the standard start path so the user still gets a
+            // recording, just without the first ~180ms.
+            log.notice("commit without active buffer → startRecording fallback")
+            startRecording()
+            return
+        }
+        guard appState.recordingState == .idle else {
+            // Something else already started a recording — drop the buffer.
+            log.notice("commit while recordingState=\(appState.recordingState) → discard buffer")
+            bufferedSessionActive = false
+            audioCapture.discardBuffered()
+            return
+        }
+
+        log.notice("commit buffered session → full recording")
+        bufferedSessionActive = false
+        targetApplication = NSWorkspace.shared.frontmostApplication
+        log.notice("target application = \(targetApplication?.localizedName ?? "nil")")
+        cancelFinalizationTimers()
+        asrClient.prepareForNewSession()
+        currentTranscription = ""
+        appState.currentText = ""
+        appState.recordingState = .starting
+        waveformProcessor.reset()
+        overlayPanel.showListening()
+        overlayPanel.updateWaveform(levels: Array(repeating: 0.12, count: 5))
+        hotkeyManager.setEscapeHandlingEnabled(true)
+
+        if AutomationController.shouldMockASR {
+            audioCapture.commitBuffered()
+            startMockASRSession()
+            return
+        }
+
+        // Flush buffered PCM into the live pipeline. asrClient buffers
+        // writes until the WebSocket completes its handshake, so these
+        // chunks won't be lost even though connect() is still in flight.
+        audioCapture.commitBuffered()
+
+        Task {
+            if let cachedParams = ASRParamsStore.load() {
+                usingCachedParams = true
+                asrClient.connect(params: cachedParams)
+                return
+            }
+
+            if webViewManager.isActive,
+               let params = await webViewManager.extractASRParams() {
+                usingCachedParams = false
+                ASRParamsStore.save(params)
+                asrClient.connect(params: params)
+                return
+            }
+
+            overlayPanel.showError(text: "无法获取连接参数 请重新登录")
+            resetToIdle(after: 1.2)
+        }
+    }
+
+    /// Trigger key released before the hold commit delay. Drop the buffered
+    /// audio and stop the engine. Any tap-recognition (single/double) is
+    /// driven by a separate `.toggleRecording` event that arrives after.
+    private func discardBufferedSession() {
+        guard bufferedSessionActive else { return }
+        log.notice("discard buffered session")
+        bufferedSessionActive = false
+        audioCapture.discardBuffered()
     }
 
     private func startRecording() {
@@ -406,6 +529,12 @@ final class TranscriptionManager {
     }
 
     private func cancelRecording() {
+        if bufferedSessionActive {
+            log.notice("cancel recording while buffered → discard")
+            bufferedSessionActive = false
+            audioCapture.discardBuffered()
+            return
+        }
         guard appState.recordingState != .idle else { return }
         log.notice("cancel recording")
         awaitingFinalResult = false
@@ -431,6 +560,7 @@ final class TranscriptionManager {
         let reset = { [weak self] in
             guard let self else { return }
             self.awaitingFinalResult = false
+            self.bufferedSessionActive = false
             self.cancelFinalizationTimers()
             self.cancelMockASRSession()
             self.currentTranscription = ""

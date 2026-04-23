@@ -36,7 +36,9 @@ jobs:
 
       - name: Read actual build number
         run: |
-          PLIST="$HOME/.voiceinput-build/Release/PennSay.app/Contents/Info.plist"
+          # `build/` is a symlink in the repo root pointing at the workspace
+          # build root (see scripts/build.sh + Step 15 workspace migration).
+          PLIST="build/PennSay-v${PENNSAY_VERSION}.app/Contents/Info.plist"
           BUILD=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST")
           echo "PENNSAY_BUILD=$BUILD" >> "$GITHUB_ENV"
 

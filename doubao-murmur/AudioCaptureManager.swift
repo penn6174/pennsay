@@ -3,16 +3,108 @@ import AVFoundation
 
 /// Captures microphone audio using AVAudioEngine, resamples to 16kHz mono,
 /// and delivers Int16 little-endian PCM data via the `onAudioData` callback.
+///
+/// Two capture modes:
+///   - `.live`     — PCM is forwarded to `onAudioData` immediately. Used by
+///                   `startCapture()` (the legacy entry point).
+///   - `.buffered` — PCM is retained in an in-memory ring buffer until the
+///                   caller either commits (flushes buffered chunks through
+///                   `onAudioData` and switches to live) or discards (drops
+///                   buffered chunks and stops the engine). Used by the
+///                   shortcut layer to keep Hold responsive without
+///                   connecting the ASR for taps that turn out to be
+///                   (double) taps.
 class AudioCaptureManager {
+    private enum CaptureMode {
+        case live
+        case buffered
+    }
+
     private var audioEngine: AVAudioEngine?
     private var converter: AVAudioConverter?
     private var isCapturing = false
+
+    private let gateLock = NSLock()
+    private var captureMode: CaptureMode = .live
+    private var bufferedChunks: [Data] = []
+    private var bufferedBytes: Int = 0
+    private var maxBufferedBytes: Int = 0
 
     /// Called on the audio thread with raw Int16 LE PCM data ready to send over WebSocket.
     var onAudioData: ((Data) -> Void)?
     var onRMS: ((Double) -> Void)?
 
+    /// Starts microphone capture in live mode — PCM is forwarded immediately.
     func startCapture() throws {
+        gateLock.lock()
+        captureMode = .live
+        bufferedChunks.removeAll()
+        bufferedBytes = 0
+        maxBufferedBytes = 0
+        gateLock.unlock()
+        try startEngineIfNeeded()
+    }
+
+    /// Starts microphone capture in buffered mode. PCM is retained in memory
+    /// (ring-trimmed to `maxBufferMilliseconds`) until the caller commits
+    /// or discards. Safe to call while already capturing — switches the gate
+    /// without restarting the engine.
+    func startBuffered(maxBufferMilliseconds: Int) throws {
+        let targetBytes = max(0, maxBufferMilliseconds) * 16_000 * 2 / 1000
+        gateLock.lock()
+        captureMode = .buffered
+        bufferedChunks.removeAll()
+        bufferedBytes = 0
+        maxBufferedBytes = targetBytes
+        gateLock.unlock()
+        try startEngineIfNeeded()
+    }
+
+    /// Flushes buffered chunks through `onAudioData` in order, then switches
+    /// to live mode so subsequent PCM flows straight through.
+    func commitBuffered() {
+        gateLock.lock()
+        let chunks = bufferedChunks
+        bufferedChunks.removeAll()
+        bufferedBytes = 0
+        captureMode = .live
+        gateLock.unlock()
+
+        guard let callback = onAudioData else { return }
+        for chunk in chunks {
+            callback(chunk)
+        }
+    }
+
+    /// Drops buffered chunks and stops the engine. Next use must call
+    /// `startCapture()` or `startBuffered(...)` again.
+    func discardBuffered() {
+        gateLock.lock()
+        bufferedChunks.removeAll()
+        bufferedBytes = 0
+        captureMode = .live
+        gateLock.unlock()
+        stopCapture()
+    }
+
+    func stopCapture() {
+        guard isCapturing else { return }
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
+        audioEngine = nil
+        converter = nil
+        isCapturing = false
+        gateLock.lock()
+        bufferedChunks.removeAll()
+        bufferedBytes = 0
+        captureMode = .live
+        gateLock.unlock()
+        print("[AudioCaptureManager] ⏹ Stopped")
+    }
+
+    // MARK: - Engine
+
+    private func startEngineIfNeeded() throws {
         guard !isCapturing else { return }
 
         let engine = AVAudioEngine()
@@ -51,21 +143,11 @@ class AudioCaptureManager {
         print("[AudioCaptureManager] ✅ Started (\(inputFormat.sampleRate)Hz ch\(inputFormat.channelCount) → 16kHz mono Int16)")
     }
 
-    func stopCapture() {
-        guard isCapturing else { return }
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
-        converter = nil
-        isCapturing = false
-        print("[AudioCaptureManager] ⏹ Stopped")
-    }
-
     // MARK: - Audio Processing
 
     /// Resample native audio to 16kHz mono Float32, then convert to Int16 LE PCM.
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard let converter = converter, let onAudioData = onAudioData else { return }
+        guard let converter = converter else { return }
 
         let ratio = 16000.0 / converter.inputFormat.sampleRate
         let outputFrameCapacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * ratio))
@@ -106,7 +188,25 @@ class AudioCaptureManager {
             }
         }
 
-        onAudioData(pcm)
+        routePCM(pcm)
+    }
+
+    private func routePCM(_ pcm: Data) {
+        gateLock.lock()
+        switch captureMode {
+        case .live:
+            gateLock.unlock()
+            onAudioData?(pcm)
+        case .buffered:
+            bufferedChunks.append(pcm)
+            bufferedBytes += pcm.count
+            // Ring-trim: drop oldest chunks when over budget so memory stays bounded.
+            while bufferedBytes > maxBufferedBytes, bufferedChunks.count > 1 {
+                let first = bufferedChunks.removeFirst()
+                bufferedBytes -= first.count
+            }
+            gateLock.unlock()
+        }
     }
 
     private func rmsValue(from buffer: UnsafePointer<Float>, count: Int) -> Double {

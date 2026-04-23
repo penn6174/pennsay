@@ -2,6 +2,17 @@ import Cocoa
 
 final class HotkeyManager {
     enum HotkeyEvent {
+        /// A supported-Hold trigger just went down. Consumer should start a
+        /// buffered microphone session (audio retained in memory, no ASR yet).
+        case beginBuffering
+        /// Hold has been held long enough to commit. Consumer should connect
+        /// ASR and flush the buffered audio into the live pipeline.
+        case commitHold
+        /// A buffered-Hold session ended before commit (user released early).
+        /// Consumer should drop the buffered audio and stop the engine.
+        case discardBuffered
+        /// Legacy entry (still used by automation and by tap-only paths that
+        /// need a one-shot "start now" — e.g. `toggleRecording` from idle).
         case startRecording
         case stopRecording
         case toggleRecording
@@ -13,7 +24,10 @@ final class HotkeyManager {
         private let supportedModes: Set<ShortcutMode>
         var triggerKeyIsDown = false
         var triggerPressStartTime: TimeInterval = 0
-        var holdStarted = false
+        /// `.beginBuffering` has been emitted and not yet balanced by a
+        /// `.commitHold` / `.discardBuffered`.
+        var bufferingActive = false
+        /// `.commitHold` has been emitted for the current press.
         var holdCommitted = false
         var pendingHoldCommit: DispatchWorkItem?
         var otherKeyPressedWhileDown = false
@@ -37,10 +51,6 @@ final class HotkeyManager {
             supportedModes.contains(.doubleTapToggle)
         }
 
-        var requiresHoldDelay: Bool {
-            supportsHold && (supportsSingleTap || supportsDoubleTap)
-        }
-
         var modeSummary: String {
             [
                 ShortcutMode.hold,
@@ -54,7 +64,7 @@ final class HotkeyManager {
 
         func cancelTransientState() {
             triggerKeyIsDown = false
-            holdStarted = false
+            bufferingActive = false
             holdCommitted = false
             waitingForSecondTap = false
             otherKeyPressedWhileDown = false
@@ -77,8 +87,20 @@ final class HotkeyManager {
     private var tapRetryCount = 0
     private let maxTapRetries = 30
     private var shouldConsumeEscape = false
-    private let sharedHoldCommitDelay: TimeInterval = 0.18
-    private let accidentalHoldPressThreshold: TimeInterval = 0.08
+
+    /// How long the user must hold a Hold-capable key before the press is
+    /// committed as a real Hold (and ASR is connected). Shorter presses are
+    /// treated as taps — buffered audio is discarded.
+    private let holdCommitDelay: TimeInterval = 0.18
+
+    /// Milliseconds of audio retained in the microphone ring buffer while
+    /// waiting to decide Hold-vs-tap. Must be ≥ `holdCommitDelay * 1000` plus
+    /// a small margin for the first AVAudio tap frame that arrives slightly
+    /// after the trigger.
+    private let bufferedCaptureHeadroomMs: Int = 300
+
+    /// Presses shorter than this are ignored entirely (accidental brush).
+    private let accidentalPressThreshold: TimeInterval = 0.08
 
     init(configuration: ShortcutConfiguration) {
         self.configuration = configuration.normalizedForRuntime()
@@ -191,21 +213,25 @@ final class HotkeyManager {
         runtimeKey.otherKeyPressedWhileDown = false
         log.notice("trigger down key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary) waitingSecondTap=\(runtimeKey.waitingForSecondTap)")
 
+        // Second-tap of a potential double-tap: keep `waitingForSecondTap`
+        // set, just pause the timeout so it doesn't race the up-event.
         if runtimeKey.waitingForSecondTap {
             runtimeKey.secondTapTimeoutWorkItem?.cancel()
             runtimeKey.secondTapTimeoutWorkItem = nil
         }
 
+        // If this key supports Hold, start a silent buffered capture. After
+        // `holdCommitDelay` we will promote it to a real recording; if the
+        // user releases earlier it becomes a tap and the buffered audio is
+        // discarded. Keys without Hold do nothing on down — they decide on
+        // up.
         guard runtimeKey.supportsHold else { return }
         let sessionActive = isRecordingSessionActive?() ?? false
-        if runtimeKey.requiresHoldDelay {
-            guard !sessionActive else { return }
-            startHold(for: runtimeKey, committed: false)
-            scheduleSharedHoldCommit(for: runtimeKey)
-        } else {
-            guard !sessionActive else { return }
-            startHold(for: runtimeKey, committed: true)
-        }
+        guard !sessionActive else { return }
+
+        runtimeKey.bufferingActive = true
+        onHotkeyEvent?(.beginBuffering)
+        scheduleHoldCommit(for: runtimeKey)
     }
 
     private func handleTriggerUp(_ runtimeKey: RuntimeKey, at timestamp: TimeInterval) {
@@ -215,44 +241,43 @@ final class HotkeyManager {
         runtimeKey.pendingHoldCommit = nil
 
         let pressDuration = timestamp - runtimeKey.triggerPressStartTime
-        log.notice("trigger up key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary) duration=\(pressDuration) holdStarted=\(runtimeKey.holdStarted) holdCommitted=\(runtimeKey.holdCommitted) waitingSecondTap=\(runtimeKey.waitingForSecondTap)")
-        defer {
-            runtimeKey.holdStarted = false
-            runtimeKey.holdCommitted = false
-            runtimeKey.otherKeyPressedWhileDown = false
-        }
+        let wasCommitted = runtimeKey.holdCommitted
+        let wasBuffered = runtimeKey.bufferingActive
+        let otherKey = runtimeKey.otherKeyPressedWhileDown
+        log.notice("trigger up key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary) duration=\(pressDuration) bufferingActive=\(wasBuffered) holdCommitted=\(wasCommitted) waitingSecondTap=\(runtimeKey.waitingForSecondTap)")
 
-        if runtimeKey.holdStarted {
-            if !runtimeKey.holdCommitted {
-                log.notice("shared hold reverted to tap key=\(runtimeKey.triggerKey.rawValue) duration=\(pressDuration)")
-                onHotkeyEvent?(.cancel)
-                guard !runtimeKey.otherKeyPressedWhileDown else {
-                    cancelTapSequence(for: runtimeKey, reason: "chord")
-                    return
-                }
-                handleTapGesture(for: runtimeKey)
-                return
-            }
+        runtimeKey.bufferingActive = false
+        runtimeKey.holdCommitted = false
+        runtimeKey.otherKeyPressedWhileDown = false
 
-            if !runtimeKey.requiresHoldDelay, pressDuration < accidentalHoldPressThreshold {
-                log.notice("hold cancelled as accidental press key=\(runtimeKey.triggerKey.rawValue) duration=\(pressDuration)")
-                onHotkeyEvent?(.cancel)
-            } else {
-                onHotkeyEvent?(.stopRecording)
-            }
+        if wasCommitted {
+            // Hold was already committed → stop like a normal Hold.
+            onHotkeyEvent?(.stopRecording)
             return
         }
 
-        guard !runtimeKey.otherKeyPressedWhileDown else {
+        if wasBuffered {
+            // Buffered session that never committed → drop the audio.
+            onHotkeyEvent?(.discardBuffered)
+        }
+
+        if otherKey {
             cancelTapSequence(for: runtimeKey, reason: "chord")
             return
         }
 
-        handleTapGesture(for: runtimeKey)
-
-        if pressDuration < accidentalHoldPressThreshold {
-            log.notice("hold ignored as accidental press key=\(runtimeKey.triggerKey.rawValue) duration=\(pressDuration)")
+        // Only filter accidental presses when the key has *no* tap gesture
+        // bound — those keys have no other way to react to an intentional
+        // short press and would otherwise fire nothing. Tap-bound keys are
+        // intentional by definition, even very short ones.
+        let tapBound = runtimeKey.supportsSingleTap || runtimeKey.supportsDoubleTap
+        if !tapBound, pressDuration < accidentalPressThreshold {
+            log.notice("ignored as accidental press key=\(runtimeKey.triggerKey.rawValue) duration=\(pressDuration)")
+            cancelTapSequence(for: runtimeKey, reason: "accidental")
+            return
         }
+
+        handleTapGesture(for: runtimeKey)
     }
 
     private func keyIsDown(for triggerKey: ShortcutTriggerKey, flags: CGEventFlags) -> Bool {
@@ -310,47 +335,25 @@ final class HotkeyManager {
         }
     }
 
-    private func scheduleSharedHoldCommit(for runtimeKey: RuntimeKey) {
+    private func scheduleHoldCommit(for runtimeKey: RuntimeKey) {
         runtimeKey.pendingHoldCommit?.cancel()
         let workItem = DispatchWorkItem { [weak self, weak runtimeKey] in
             guard let self, let runtimeKey else { return }
-            guard runtimeKey.triggerKeyIsDown, runtimeKey.holdStarted, !runtimeKey.holdCommitted, !runtimeKey.otherKeyPressedWhileDown else {
+            guard runtimeKey.triggerKeyIsDown,
+                  runtimeKey.bufferingActive,
+                  !runtimeKey.holdCommitted,
+                  !runtimeKey.otherKeyPressedWhileDown else {
                 return
             }
-            self.commitSharedHold(for: runtimeKey)
-        }
-        runtimeKey.pendingHoldCommit = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + sharedHoldCommitDelay, execute: workItem)
-    }
-
-    private func startHold(for runtimeKey: RuntimeKey, committed: Bool) {
-        guard !runtimeKey.holdStarted else {
-            if committed {
-                commitSharedHold(for: runtimeKey)
-            }
-            return
-        }
-
-        runtimeKey.holdStarted = true
-        runtimeKey.holdCommitted = committed
-        if committed {
+            runtimeKey.holdCommitted = true
             runtimeKey.waitingForSecondTap = false
             runtimeKey.secondTapTimeoutWorkItem?.cancel()
             runtimeKey.secondTapTimeoutWorkItem = nil
+            self.log.notice("hold committed key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary)")
+            self.onHotkeyEvent?(.commitHold)
         }
-        log.notice("hold started key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary) committed=\(committed)")
-        onHotkeyEvent?(.startRecording)
-    }
-
-    private func commitSharedHold(for runtimeKey: RuntimeKey) {
-        runtimeKey.pendingHoldCommit?.cancel()
-        runtimeKey.pendingHoldCommit = nil
-        guard runtimeKey.holdStarted, !runtimeKey.holdCommitted else { return }
-        runtimeKey.holdCommitted = true
-        runtimeKey.waitingForSecondTap = false
-        runtimeKey.secondTapTimeoutWorkItem?.cancel()
-        runtimeKey.secondTapTimeoutWorkItem = nil
-        log.notice("shared hold committed key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary)")
+        runtimeKey.pendingHoldCommit = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + holdCommitDelay, execute: workItem)
     }
 
     private func handleTapGesture(for runtimeKey: RuntimeKey) {
@@ -419,6 +422,11 @@ final class HotkeyManager {
     private func cancelTransientState() {
         runtimeKeys.forEach { $0.cancelTransientState() }
     }
+
+    /// Exposed for TranscriptionManager so it can size the microphone ring
+    /// buffer to exactly cover the hold-commit delay plus a margin for the
+    /// first AVAudio tap frame.
+    var bufferedCaptureMilliseconds: Int { bufferedCaptureHeadroomMs }
 }
 
 private func hotkeyCallback(
