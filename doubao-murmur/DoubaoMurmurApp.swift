@@ -146,20 +146,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.refreshStatusUI()
             }
             .store(in: &cancellables)
+
+        // Voice-use → update check (debounced to 30 min inside the scheduler).
+        // We trigger on transition into .starting so every recording session
+        // — Hold, single tap, double tap — counts as one "voice use" event.
+        appState.$recordingState
+            .removeDuplicates()
+            .filter { $0 == .starting }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.autoUpdateScheduler?.checkOnVoiceUse()
+            }
+            .store(in: &cancellables)
     }
 
     private func updateStatusButton() {
         guard let button = statusItem.button else { return }
-        let symbolName: String
         switch appState.recordingState {
         case .recording, .starting:
-            symbolName = "mic.fill"
+            // Active recording — use the colorful mic SF Symbol so the
+            // menu bar reflects "currently capturing" at a glance.
+            button.title = ""
+            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: AppEnvironment.displayName)
         case .stopping, .refining:
-            symbolName = "waveform"
+            button.title = ""
+            button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: AppEnvironment.displayName)
         case .idle:
-            symbolName = "waveform"
+            // Idle default — the ninja emoji is the Penn-identity icon
+            // (renders in color automatically on macOS 11+).
+            button.image = nil
+            button.title = "🥷"
         }
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: AppEnvironment.displayName)
         button.toolTip = AppEnvironment.displayName
         configureStatusBadge(on: button)
         updateBadgeView.count = appState.availableUpdateBadgeCount
@@ -207,9 +224,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let logsItem = NSMenuItem(title: "打开日志文件夹", action: #selector(openLogsFolder), keyEquivalent: "")
         menu.addItem(logsItem)
 
-        let updateItem = NSMenuItem(title: "检查更新", action: #selector(checkForUpdates), keyEquivalent: "u")
-        if appState.hasAvailableUpdate {
+        // If a silent download has already staged a new release, the user
+        // should be able to apply it with a single click without re-hitting
+        // the GitHub API. Fall back to the regular "检查更新" flow otherwise.
+        let updateItem: NSMenuItem
+        if let release = appState.availableUpdate, AppUpdater.shared.isPrepared(for: release) {
+            updateItem = NSMenuItem(
+                title: "立即更新到 v\(release.version)",
+                action: #selector(applyPreparedUpdate),
+                keyEquivalent: "u"
+            )
             updateItem.image = Self.makeMenuBadgeImage(count: appState.availableUpdateBadgeCount)
+        } else {
+            updateItem = NSMenuItem(title: "检查更新", action: #selector(checkForUpdates), keyEquivalent: "u")
+            if appState.hasAvailableUpdate {
+                updateItem.image = Self.makeMenuBadgeImage(count: appState.availableUpdateBadgeCount)
+            }
         }
         menu.addItem(updateItem)
 
@@ -493,6 +523,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     NSWorkspace.shared.open(url)
                 }
             }
+        }
+    }
+
+    /// One-click apply for an already-downloaded update. Assumes the
+    /// prepared identifier matches `appState.availableUpdate`; the menu
+    /// only wires this when `AppUpdater.isPrepared(for:)` is true.
+    @objc private func applyPreparedUpdate() {
+        guard let release = appState.availableUpdate else { return }
+        let updater = AppUpdater.shared
+        do {
+            try updater.scheduleRelaunchAfterTermination()
+            appState.availableUpdate = nil
+            log.notice("applying prepared update v\(release.version)")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                NSApp.terminate(nil)
+            }
+        } catch {
+            log.error("apply prepared update failed: \(error.localizedDescription)")
+            let alert = NSAlert()
+            alert.messageText = "立即更新失败"
+            alert.informativeText = "\(error.localizedDescription)\n请从 菜单 → 检查更新 手动重试。"
+            alert.addButton(withTitle: "好的")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
         }
     }
 

@@ -66,6 +66,13 @@ final class AppUpdater {
         return fileManager.isWritableFile(atPath: parentURL.path)
     }
 
+    /// Returns true when this release has already been downloaded and staged
+    /// (`install-on-quit.sh` waiting). The caller can skip a re-download and
+    /// go straight to `scheduleRelaunchAfterTermination()`.
+    func isPrepared(for release: ReleaseInfo) -> Bool {
+        return defaults.string(forKey: Keys.preparedTag) == preparedIdentifier(for: release)
+    }
+
     func prepareUpdateIfNeeded(release: ReleaseInfo) async throws -> PreparationResult {
         guard let zipAssetURL = release.zipAssetURL else {
             throw UpdateError.missingZipAsset
