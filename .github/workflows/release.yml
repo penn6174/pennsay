@@ -27,9 +27,9 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "PENNSAY_VERSION=$VERSION" >> "$GITHUB_ENV"
-          # Build number intentionally NOT set — scripts/build.sh derives it via
-          # `git rev-list v${VERSION}..HEAD --count + 1`, which keeps the number
-          # monotonic within a MARKETING_VERSION and resets to 1 on every bump.
+          # Build number intentionally NOT set — scripts/build.sh derives a
+          # globally monotonic CFBundleVersion from the fixed build base tag.
+          # It no longer resets when MARKETING_VERSION changes.
 
       - name: Build release artifacts
         run: make release

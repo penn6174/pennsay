@@ -21,7 +21,14 @@ final class TranscriptionManager {
     private var usingCachedParams = false
     private var awaitingFinalResult = false
     private var mockWorkItems: [DispatchWorkItem] = []
+    private var tailStopWorkItem: DispatchWorkItem?
+    private var finalStabilityWorkItem: DispatchWorkItem?
+    private var finalHardTimeoutWorkItem: DispatchWorkItem?
     private var targetApplication: NSRunningApplication?
+
+    private let stopTailCaptureDelay: TimeInterval = 0.20
+    private let finalStabilityDelay: TimeInterval = 0.60
+    private let finalHardTimeout: TimeInterval = 2.50
 
     var onAuthExpired: (() -> Void)?
 
@@ -108,8 +115,7 @@ final class TranscriptionManager {
                 }
                 self.overlayPanel.showListening(text: trimmed)
                 if self.awaitingFinalResult {
-                    self.awaitingFinalResult = false
-                    self.completeTranscription()
+                    self.scheduleStableCompletion()
                 }
             }
         }
@@ -118,9 +124,18 @@ final class TranscriptionManager {
             Task { @MainActor in
                 guard let self else { return }
                 self.awaitingFinalResult = false
+                self.cancelFinalizationTimers()
                 if self.appState.recordingState == .stopping || self.appState.recordingState == .recording {
                     self.completeTranscription()
                 }
+            }
+        }
+
+        asrClient.onAudioDrained = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.appState.recordingState == .stopping else { return }
+                self.log.notice("ASR audio queue drained")
+                self.scheduleStableCompletion()
             }
         }
 
@@ -218,6 +233,8 @@ final class TranscriptionManager {
         log.notice("start recording")
         targetApplication = NSWorkspace.shared.frontmostApplication
         log.notice("target application = \(targetApplication?.localizedName ?? "nil")")
+        cancelFinalizationTimers()
+        asrClient.prepareForNewSession()
         currentTranscription = ""
         appState.currentText = ""
         appState.recordingState = .starting
@@ -275,15 +292,26 @@ final class TranscriptionManager {
             return
         }
 
-        audioCapture.stopCapture()
-        asrClient.finishSending()
         awaitingFinalResult = true
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        tailStopWorkItem?.cancel()
+        let tailStop = DispatchWorkItem { [weak self] in
             guard let self, self.appState.recordingState == .stopping else { return }
+            self.audioCapture.stopCapture()
+            self.asrClient.finishSending()
+        }
+        tailStopWorkItem = tailStop
+        DispatchQueue.main.asyncAfter(deadline: .now() + stopTailCaptureDelay, execute: tailStop)
+
+        finalHardTimeoutWorkItem?.cancel()
+        let hardTimeout = DispatchWorkItem { [weak self] in
+            guard let self, self.appState.recordingState == .stopping else { return }
+            self.log.notice("ASR final hard timeout reached")
             self.awaitingFinalResult = false
             self.completeTranscription()
         }
+        finalHardTimeoutWorkItem = hardTimeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + finalHardTimeout, execute: hardTimeout)
     }
 
     private func completeTranscription() {
@@ -374,6 +402,7 @@ final class TranscriptionManager {
         guard appState.recordingState != .idle else { return }
         log.notice("cancel recording")
         awaitingFinalResult = false
+        cancelFinalizationTimers()
         cancelMockASRSession()
         audioCapture.stopCapture()
         asrClient.disconnect()
@@ -395,6 +424,7 @@ final class TranscriptionManager {
         let reset = { [weak self] in
             guard let self else { return }
             self.awaitingFinalResult = false
+            self.cancelFinalizationTimers()
             self.cancelMockASRSession()
             self.currentTranscription = ""
             self.targetApplication = nil
@@ -447,5 +477,26 @@ final class TranscriptionManager {
     private func cancelMockASRSession() {
         mockWorkItems.forEach { $0.cancel() }
         mockWorkItems.removeAll()
+    }
+
+    private func scheduleStableCompletion() {
+        finalStabilityWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.appState.recordingState == .stopping else { return }
+            self.awaitingFinalResult = false
+            self.cancelFinalizationTimers()
+            self.completeTranscription()
+        }
+        finalStabilityWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + finalStabilityDelay, execute: workItem)
+    }
+
+    private func cancelFinalizationTimers() {
+        tailStopWorkItem?.cancel()
+        tailStopWorkItem = nil
+        finalStabilityWorkItem?.cancel()
+        finalStabilityWorkItem = nil
+        finalHardTimeoutWorkItem?.cancel()
+        finalHardTimeoutWorkItem = nil
     }
 }

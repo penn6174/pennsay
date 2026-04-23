@@ -54,8 +54,8 @@ private struct GeneralSettingsView: View {
             Form {
                 Section("Status") {
                     LabeledContent("登录状态", value: AppState.shared.loginStatus.rawValue)
-                    LabeledContent("快捷键", value: store.shortcutConfiguration.triggerKey.displayName)
-                    LabeledContent("模式", value: store.shortcutConfiguration.mode.displayName)
+                    LabeledContent("触发方式 1", value: store.shortcutConfiguration.primary.displaySummary)
+                    LabeledContent("触发方式 2", value: store.shortcutConfiguration.secondary.displaySummary)
                 }
 
                 Section("Startup") {
@@ -120,30 +120,35 @@ private struct GeneralSettingsView: View {
 private struct ShortcutSettingsView: View {
     @ObservedObject var store: SettingsStore
 
-    @State private var triggerKey: ShortcutTriggerKey = .rightOption
-    @State private var mode: ShortcutMode = .hold
+    @State private var primaryTriggerKey: ShortcutTriggerKey = .rightOption
+    @State private var primaryMode: ShortcutMode = .hold
+    @State private var secondaryTriggerKey: ShortcutTriggerKey = .rightCommand
+    @State private var secondaryMode: ShortcutMode = .none
     @State private var doubleTapWindowMs: Double = Double(ShortcutConfiguration.defaultDoubleTapWindowMs)
+
+    private var draftConfiguration: ShortcutConfiguration {
+        ShortcutConfiguration(
+            primary: ShortcutTriggerSlot(triggerKey: primaryTriggerKey, mode: primaryMode),
+            secondary: ShortcutTriggerSlot(triggerKey: secondaryTriggerKey, mode: secondaryMode),
+            doubleTapWindowMs: Int(doubleTapWindowMs)
+        )
+    }
 
     var body: some View {
         Form {
-            Section("Shortcut") {
-                Picker("触发键", selection: $triggerKey) {
-                    ForEach(ShortcutTriggerKey.allCases) { key in
-                        Text(key.displayName).tag(key)
-                    }
-                }
-                .onChange(of: triggerKey) { _, newValue in
-                    if newValue == .capsLock {
-                        presentCapsLockGuide()
-                    }
-                }
+            shortcutSection(
+                title: "触发方式 1",
+                triggerKey: $primaryTriggerKey,
+                mode: $primaryMode
+            )
 
-                Picker("触发模式", selection: $mode) {
-                    ForEach(ShortcutMode.allCases) { currentMode in
-                        Text(currentMode.displayName).tag(currentMode)
-                    }
-                }
+            shortcutSection(
+                title: "触发方式 2",
+                triggerKey: $secondaryTriggerKey,
+                mode: $secondaryMode
+            )
 
+            Section("Double Tap") {
                 HStack {
                     Text("Double Tap 时间窗")
                     Slider(
@@ -155,24 +160,18 @@ private struct ShortcutSettingsView: View {
                         .frame(width: 70, alignment: .trailing)
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                 }
-                .disabled(mode != .doubleTapToggle)
-
-                if triggerKey == .function {
-                    Text("Fn 在很多键盘布局里容易与系统行为冲突，不建议作为默认触发键。")
-                        .foregroundStyle(.orange)
-                }
+                .disabled(!draftConfiguration.usesDoubleTap)
             }
 
             Section {
-                Button("Save") {
-                    store.updateShortcut(
-                        ShortcutConfiguration(
-                            triggerKey: triggerKey,
-                            mode: mode,
-                            doubleTapWindowMs: Int(doubleTapWindowMs)
-                        )
-                    )
+                if draftConfiguration.hasKeyConflict {
+                    Text("两个触发方式不能使用同一个按键。请把其中一个设为“无”，或选择不同按键。")
+                        .foregroundStyle(.red)
                 }
+                Button("Save") {
+                    store.updateShortcut(draftConfiguration)
+                }
+                .disabled(draftConfiguration.hasKeyConflict)
             }
         }
         .formStyle(.grouped)
@@ -181,9 +180,48 @@ private struct ShortcutSettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private func shortcutSection(
+        title: String,
+        triggerKey: Binding<ShortcutTriggerKey>,
+        mode: Binding<ShortcutMode>
+    ) -> some View {
+        Section(title) {
+            Picker("触发模式", selection: mode) {
+                ForEach(ShortcutMode.allCases) { currentMode in
+                    Text(currentMode.displayName).tag(currentMode)
+                }
+            }
+
+            Picker("触发键", selection: triggerKey) {
+                ForEach(ShortcutTriggerKey.allCases) { key in
+                    Text(key.displayName).tag(key)
+                }
+            }
+            .disabled(mode.wrappedValue == .none)
+            .onChange(of: triggerKey.wrappedValue) { _, newValue in
+                if newValue == .capsLock, mode.wrappedValue != .none {
+                    presentCapsLockGuide()
+                }
+            }
+            .onChange(of: mode.wrappedValue) { _, newValue in
+                if newValue != .none, triggerKey.wrappedValue == .capsLock {
+                    presentCapsLockGuide()
+                }
+            }
+
+            if mode.wrappedValue != .none, triggerKey.wrappedValue == .function {
+                Text("Fn 在很多键盘布局里容易与系统行为冲突，不建议作为默认触发键。")
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
     private func loadFromStore() {
-        triggerKey = store.shortcutConfiguration.triggerKey
-        mode = store.shortcutConfiguration.mode
+        primaryTriggerKey = store.shortcutConfiguration.primary.triggerKey
+        primaryMode = store.shortcutConfiguration.primary.mode
+        secondaryTriggerKey = store.shortcutConfiguration.secondary.triggerKey
+        secondaryMode = store.shortcutConfiguration.secondary.mode
         doubleTapWindowMs = Double(store.shortcutConfiguration.doubleTapWindowMs)
     }
 

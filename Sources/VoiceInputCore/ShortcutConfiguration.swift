@@ -53,6 +53,7 @@ public enum ShortcutTriggerKey: String, CaseIterable, Codable, Sendable, Identif
 }
 
 public enum ShortcutMode: String, CaseIterable, Codable, Sendable, Identifiable {
+    case none
     case hold
     case singleTapToggle
     case doubleTapToggle
@@ -61,6 +62,8 @@ public enum ShortcutMode: String, CaseIterable, Codable, Sendable, Identifiable 
 
     public var displayName: String {
         switch self {
+        case .none:
+            return "无"
         case .hold:
             return "Hold"
         case .singleTapToggle:
@@ -71,14 +74,51 @@ public enum ShortcutMode: String, CaseIterable, Codable, Sendable, Identifiable 
     }
 }
 
+public enum ShortcutSlotIdentifier: String, CaseIterable, Codable, Sendable, Identifiable {
+    case primary
+    case secondary
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .primary:
+            return "触发方式 1"
+        case .secondary:
+            return "触发方式 2"
+        }
+    }
+}
+
+public struct ShortcutTriggerSlot: Codable, Equatable, Sendable {
+    public var triggerKey: ShortcutTriggerKey
+    public var mode: ShortcutMode
+
+    public init(
+        triggerKey: ShortcutTriggerKey = .rightOption,
+        mode: ShortcutMode = .none
+    ) {
+        self.triggerKey = triggerKey
+        self.mode = mode
+    }
+
+    public var isEnabled: Bool {
+        mode != .none
+    }
+
+    public var displaySummary: String {
+        isEnabled ? "\(triggerKey.displayName) · \(mode.displayName)" : "无"
+    }
+}
+
 public struct ShortcutConfiguration: Codable, Equatable, Sendable {
     public static let minimumDoubleTapWindowMs = 150
     public static let maximumDoubleTapWindowMs = 500
     public static let defaultDoubleTapWindowMs = 200
     public static let previousDefaultDoubleTapWindowMs = 300
 
-    public var triggerKey: ShortcutTriggerKey
-    public var mode: ShortcutMode
+    public var primary: ShortcutTriggerSlot
+    public var secondary: ShortcutTriggerSlot
     public var doubleTapWindowMs: Int
 
     public init(
@@ -86,9 +126,59 @@ public struct ShortcutConfiguration: Codable, Equatable, Sendable {
         mode: ShortcutMode = .hold,
         doubleTapWindowMs: Int = ShortcutConfiguration.defaultDoubleTapWindowMs
     ) {
-        self.triggerKey = triggerKey
-        self.mode = mode
+        self.primary = ShortcutTriggerSlot(triggerKey: triggerKey, mode: mode)
+        self.secondary = ShortcutTriggerSlot(triggerKey: .rightCommand, mode: .none)
         self.doubleTapWindowMs = ShortcutConfiguration.clampDoubleTapWindowMs(doubleTapWindowMs)
+    }
+
+    public init(
+        primary: ShortcutTriggerSlot,
+        secondary: ShortcutTriggerSlot = ShortcutTriggerSlot(triggerKey: .rightCommand, mode: .none),
+        doubleTapWindowMs: Int = ShortcutConfiguration.defaultDoubleTapWindowMs
+    ) {
+        self.primary = primary
+        self.secondary = secondary
+        self.doubleTapWindowMs = ShortcutConfiguration.clampDoubleTapWindowMs(doubleTapWindowMs)
+    }
+
+    public var triggerKey: ShortcutTriggerKey {
+        get { primary.triggerKey }
+        set { primary.triggerKey = newValue }
+    }
+
+    public var mode: ShortcutMode {
+        get { primary.mode }
+        set { primary.mode = newValue }
+    }
+
+    public var enabledSlots: [(ShortcutSlotIdentifier, ShortcutTriggerSlot)] {
+        [
+            (.primary, primary),
+            (.secondary, secondary),
+        ].filter { $0.1.isEnabled }
+    }
+
+    public var hasKeyConflict: Bool {
+        primary.isEnabled
+            && secondary.isEnabled
+            && primary.triggerKey == secondary.triggerKey
+    }
+
+    public var usesDoubleTap: Bool {
+        primary.mode == .doubleTapToggle || secondary.mode == .doubleTapToggle
+    }
+
+    public var displaySummary: String {
+        let primaryText = "1: \(primary.displaySummary)"
+        let secondaryText = "2: \(secondary.displaySummary)"
+        return "\(primaryText) / \(secondaryText)"
+    }
+
+    public func normalizedForRuntime() -> ShortcutConfiguration {
+        guard hasKeyConflict else { return self }
+        var copy = self
+        copy.secondary.mode = .none
+        return copy
     }
 
     public static func clampDoubleTapWindowMs(_ value: Int) -> Int {

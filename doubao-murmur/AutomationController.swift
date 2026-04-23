@@ -5,6 +5,8 @@ enum AutomationController {
         struct ShortcutState: Codable {
             var triggerKey: String
             var mode: String
+            var secondaryTriggerKey: String
+            var secondaryMode: String
             var doubleTapWindowMs: Int
         }
 
@@ -74,7 +76,17 @@ enum AutomationController {
         ) ?? .hold
         let doubleTap = Int(environment["VOICEINPUT_AUTOMATION_SET_DOUBLE_TAP_MS"] ?? "")
             ?? ShortcutConfiguration.defaultDoubleTapWindowMs
-        return ShortcutConfiguration(triggerKey: triggerKey, mode: mode, doubleTapWindowMs: doubleTap)
+        let secondaryTriggerKey = ShortcutTriggerKey(
+            rawValue: environment["VOICEINPUT_AUTOMATION_SET_SECONDARY_TRIGGER_KEY"] ?? ""
+        ) ?? .rightCommand
+        let secondaryMode = ShortcutMode(
+            rawValue: environment["VOICEINPUT_AUTOMATION_SET_SECONDARY_MODE"] ?? ShortcutMode.none.rawValue
+        ) ?? .none
+        return ShortcutConfiguration(
+            primary: ShortcutTriggerSlot(triggerKey: triggerKey, mode: mode),
+            secondary: ShortcutTriggerSlot(triggerKey: secondaryTriggerKey, mode: secondaryMode),
+            doubleTapWindowMs: doubleTap
+        )
     }
 
     @MainActor
@@ -144,8 +156,10 @@ enum AutomationController {
             overlay: overlay,
             shortcut: store.map {
                 .init(
-                    triggerKey: $0.shortcutConfiguration.triggerKey.rawValue,
-                    mode: $0.shortcutConfiguration.mode.rawValue,
+                    triggerKey: $0.shortcutConfiguration.primary.triggerKey.rawValue,
+                    mode: $0.shortcutConfiguration.primary.mode.rawValue,
+                    secondaryTriggerKey: $0.shortcutConfiguration.secondary.triggerKey.rawValue,
+                    secondaryMode: $0.shortcutConfiguration.secondary.mode.rawValue,
                     doubleTapWindowMs: $0.shortcutConfiguration.doubleTapWindowMs
                 )
             },

@@ -9,6 +9,8 @@ final class SettingsStore: ObservableObject {
     enum Keys {
         static let shortcutTriggerKey = "shortcut.triggerKey"
         static let shortcutMode = "shortcut.mode"
+        static let shortcutSecondaryTriggerKey = "shortcut.secondary.triggerKey"
+        static let shortcutSecondaryMode = "shortcut.secondary.mode"
         static let shortcutDoubleTapWindowMs = "shortcut.doubleTapWindowMs"
         static let shortcutDefaultsVersion = "shortcut.defaultsVersion"
         static let llmConfiguration = "llm.configuration"
@@ -19,7 +21,7 @@ final class SettingsStore: ObservableObject {
     }
 
     private enum ShortcutDefaults {
-        static let currentVersion = 2
+        static let currentVersion = 3
     }
 
     @Published private(set) var shortcutConfiguration: ShortcutConfiguration
@@ -37,13 +39,17 @@ final class SettingsStore: ObservableObject {
             ?? .rightOption
         let mode = ShortcutMode(rawValue: defaults.string(forKey: Keys.shortcutMode) ?? "")
             ?? .hold
+        let secondaryTrigger = ShortcutTriggerKey(rawValue: defaults.string(forKey: Keys.shortcutSecondaryTriggerKey) ?? "")
+            ?? .rightCommand
+        let secondaryMode = ShortcutMode(rawValue: defaults.string(forKey: Keys.shortcutSecondaryMode) ?? "")
+            ?? .none
         let doubleTap = defaults.object(forKey: Keys.shortcutDoubleTapWindowMs) as? Int
             ?? ShortcutConfiguration.defaultDoubleTapWindowMs
         shortcutConfiguration = ShortcutConfiguration(
-            triggerKey: trigger,
-            mode: mode,
+            primary: ShortcutTriggerSlot(triggerKey: trigger, mode: mode),
+            secondary: ShortcutTriggerSlot(triggerKey: secondaryTrigger, mode: secondaryMode),
             doubleTapWindowMs: doubleTap
-        )
+        ).normalizedForRuntime()
         autoCheckUpdatesEnabled = defaults.object(forKey: Keys.autoCheckEnabled) as? Bool ?? true
         launchAtLoginEnabled = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
 
@@ -70,10 +76,13 @@ final class SettingsStore: ObservableObject {
     }
 
     func updateShortcut(_ configuration: ShortcutConfiguration) {
-        shortcutConfiguration = configuration
-        defaults.set(configuration.triggerKey.rawValue, forKey: Keys.shortcutTriggerKey)
-        defaults.set(configuration.mode.rawValue, forKey: Keys.shortcutMode)
-        defaults.set(configuration.doubleTapWindowMs, forKey: Keys.shortcutDoubleTapWindowMs)
+        let normalized = configuration.normalizedForRuntime()
+        shortcutConfiguration = normalized
+        defaults.set(normalized.primary.triggerKey.rawValue, forKey: Keys.shortcutTriggerKey)
+        defaults.set(normalized.primary.mode.rawValue, forKey: Keys.shortcutMode)
+        defaults.set(normalized.secondary.triggerKey.rawValue, forKey: Keys.shortcutSecondaryTriggerKey)
+        defaults.set(normalized.secondary.mode.rawValue, forKey: Keys.shortcutSecondaryMode)
+        defaults.set(normalized.doubleTapWindowMs, forKey: Keys.shortcutDoubleTapWindowMs)
         defaults.set(ShortcutDefaults.currentVersion, forKey: Keys.shortcutDefaultsVersion)
     }
 
@@ -163,6 +172,11 @@ final class SettingsStore: ObservableObject {
         if shortcutConfiguration.doubleTapWindowMs == ShortcutConfiguration.previousDefaultDoubleTapWindowMs {
             shortcutConfiguration.doubleTapWindowMs = ShortcutConfiguration.defaultDoubleTapWindowMs
             defaults.set(shortcutConfiguration.doubleTapWindowMs, forKey: Keys.shortcutDoubleTapWindowMs)
+        }
+
+        if shortcutConfiguration.hasKeyConflict {
+            shortcutConfiguration = shortcutConfiguration.normalizedForRuntime()
+            defaults.set(shortcutConfiguration.secondary.mode.rawValue, forKey: Keys.shortcutSecondaryMode)
         }
 
         defaults.set(ShortcutDefaults.currentVersion, forKey: Keys.shortcutDefaultsVersion)

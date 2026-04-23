@@ -79,7 +79,8 @@ final class AppUpdater {
             throw UpdateError.destinationNotWritable
         }
 
-        if defaults.string(forKey: Keys.preparedTag) == release.tag {
+        let preparedIdentifier = preparedIdentifier(for: release)
+        if defaults.string(forKey: Keys.preparedTag) == preparedIdentifier {
             return .alreadyPrepared
         }
 
@@ -126,8 +127,8 @@ final class AppUpdater {
         installerProcess.arguments = [installerScriptURL.path]
         try installerProcess.run()
 
-        defaults.set(release.tag, forKey: Keys.preparedTag)
-        log.notice("prepared update \(release.tag) for install on next app restart")
+        defaults.set(preparedIdentifier, forKey: Keys.preparedTag)
+        log.notice("prepared update \(preparedIdentifier) for install on next app restart")
         return .prepared
     }
 
@@ -177,14 +178,35 @@ final class AppUpdater {
     }
 
     private func clearPreparedStateIfCurrentVersionMatches() {
-        guard let preparedTag = defaults.string(forKey: Keys.preparedTag) else { return }
+        guard let preparedValue = defaults.string(forKey: Keys.preparedTag) else { return }
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
-        let normalizedPreparedVersion = preparedTag.hasPrefix("v")
-            ? String(preparedTag.dropFirst())
-            : preparedTag
-        if normalizedPreparedVersion == currentVersion {
+        let currentBuild = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0") ?? 0
+        let parsed = parsePreparedIdentifier(preparedValue)
+        let normalizedPreparedVersion = parsed.tag.hasPrefix("v")
+            ? String(parsed.tag.dropFirst())
+            : parsed.tag
+        if normalizedPreparedVersion == currentVersion,
+           parsed.build == nil || (parsed.build ?? 0) <= currentBuild {
             defaults.removeObject(forKey: Keys.preparedTag)
         }
+    }
+
+    private func preparedIdentifier(for release: ReleaseInfo) -> String {
+        if let build = release.build {
+            return "\(release.tag)#build-\(build)"
+        }
+        return release.tag
+    }
+
+    private func parsePreparedIdentifier(_ value: String) -> (tag: String, build: Int?) {
+        let parts = value.split(separator: "#", maxSplits: 1).map(String.init)
+        let tag = parts.first ?? value
+        guard parts.count == 2,
+              let buildPart = parts.last?.replacingOccurrences(of: "build-", with: ""),
+              let build = Int(buildPart) else {
+            return (tag, nil)
+        }
+        return (tag, build)
     }
 
     private func findExtractedApp(in directory: URL) throws -> URL {

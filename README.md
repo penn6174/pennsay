@@ -1,6 +1,6 @@
-# VoiceInput
+# PennSay
 
-`VoiceInput` 是一个 macOS 14+ 菜单栏语音输入工具。它沿用 `lilong7676/doubao-murmur` 的豆包 Web 登录劫持和 WSS ASR 方案，在此基础上补了原生悬浮窗、可配置快捷键、LLM 流式后处理、更新检查、卸载和分发链路。
+`PennSay` 是一个 macOS 14+ 菜单栏语音输入工具。它沿用 `lilong7676/doubao-murmur` 的豆包 Web 登录劫持和 WSS ASR 方案，在此基础上补了原生悬浮窗、可配置快捷键、LLM 流式后处理、更新检查、卸载和分发链路。
 
 ## 特性
 
@@ -11,7 +11,12 @@
   - `Right Option` / `Left Option` / `Right Command` / `Left Command` / `Right Control`
   - `Caps Lock` 引导关闭锁定行为
   - `Fn` 可选但带警告
-  - `Hold` / `Single Tap Toggle` / `Double Tap Toggle`
+  - 两个固定触发槽位，每个槽位支持 `无` / `Hold` / `Single Tap Toggle` / `Double Tap Toggle`
+  - 两个启用槽位不能使用同一个触发键，避免状态机冲突
+- ASR 首尾保护
+  - Hold 按下立即开始录音，短按误触取消
+  - 开头预置静音、松开后延迟收尾并追加尾部静音
+  - 停止后等待 partial 稳定再粘贴
 - LLM 流式润色
   - 自定义 `Base URL` / `API Key` / `Model` / `System Prompt` / `Timeout`
   - API Key 存 Keychain，其他配置存 `UserDefaults`
@@ -52,19 +57,19 @@
 1. 启动应用后，在菜单栏确认状态项出现。
 2. 如果还没登录，点击 `登录豆包`，在弹出的窗口里完成网页登录。
 3. 授予 `辅助功能` 和 `麦克风` 权限。
-4. 在 `设置... -> Shortcut` 里确认触发键和模式。
+4. 在 `设置... -> Shortcut` 里确认触发方式 1 / 触发方式 2。
 5. 如果要启用后处理，在 `设置... -> LLM 润色` 里配置 API。
 
 ## 快捷键
 
 默认值：
 
-- 触发键：`Right Option`
-- 模式：`Hold`
-- Double Tap 时间窗：`300ms`
+- 触发方式 1：`Right Option` + `Hold`
+- 触发方式 2：`无`
+- Double Tap 时间窗：`200ms`
 - 取消：`Esc`
 
-在 `Hold` 模式下，按住说话，松开结束。短于 `80ms` 的按压会被当成误触忽略。
+在 `Hold` 模式下，按住说话，松开结束。短于 `80ms` 的按压会被当成误触取消，不会粘贴文本。
 
 ## 快捷键失灵怎么办
 

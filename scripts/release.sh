@@ -58,7 +58,7 @@ create-dmg \
 
 (
   (cd "$RELEASE_DIR" && tar -cf - "$SIGNED_APP_NAME" | shasum -a 256 | awk '{print $1 "  '"$SIGNED_APP_NAME"'"}')
-  shasum -a 256 "$ZIP_PATH" "$DMG_PATH"
+  (cd "$RELEASE_DIR" && shasum -a 256 "$(basename "$ZIP_PATH")" "$(basename "$DMG_PATH")")
 ) >"$SHA_PATH"
 
 rm -rf "$STAGE_DIR"

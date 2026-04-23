@@ -38,7 +38,7 @@ class AudioCaptureManager {
         }
         self.converter = conv
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
+        inputNode.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) {
             [weak self] buffer, _ in
             self?.processAudioBuffer(buffer)
         }

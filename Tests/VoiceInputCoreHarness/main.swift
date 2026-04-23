@@ -20,6 +20,10 @@ struct VoiceInputCoreTestHarness {
         try louderRMSProducesTallerBars()
         try releaseShrinksBarsWhenRMSFalls()
         try valuesStayWithinBounds()
+        try shortcutDefaultHasOneEnabledSlot()
+        try shortcutNoneSlotDoesNotEnable()
+        try shortcutConflictDisablesSecondaryAtRuntime()
+        try shortcutDoubleTapDetectionLooksAcrossBothSlots()
     }
 
     private static func louderRMSProducesTallerBars() throws {
@@ -52,5 +56,38 @@ struct VoiceInputCoreTestHarness {
         )
         let values = processor.process(rms: 1.0, randomValues: [1, 1, 1, 1, 1])
         try expect(values.allSatisfy { $0 >= 0.1 && $0 <= 1.0 }, "waveform heights stay within bounds")
+    }
+
+    private static func shortcutDefaultHasOneEnabledSlot() throws {
+        let config = ShortcutConfiguration()
+        try expect(config.primary.isEnabled, "default primary shortcut is enabled")
+        try expect(!config.secondary.isEnabled, "default secondary shortcut is disabled")
+        try expect(config.enabledSlots.count == 1, "default exposes one enabled runtime slot")
+    }
+
+    private static func shortcutNoneSlotDoesNotEnable() throws {
+        let slot = ShortcutTriggerSlot(triggerKey: .rightCommand, mode: .none)
+        try expect(!slot.isEnabled, "none mode disables a shortcut slot")
+        try expect(slot.displaySummary == "无", "none mode displays as Chinese none label")
+    }
+
+    private static func shortcutConflictDisablesSecondaryAtRuntime() throws {
+        let config = ShortcutConfiguration(
+            primary: ShortcutTriggerSlot(triggerKey: .rightCommand, mode: .hold),
+            secondary: ShortcutTriggerSlot(triggerKey: .rightCommand, mode: .doubleTapToggle)
+        )
+        try expect(config.hasKeyConflict, "same key in both enabled slots is detected as conflict")
+        let normalized = config.normalizedForRuntime()
+        try expect(normalized.primary.isEnabled, "conflict normalization keeps primary slot")
+        try expect(!normalized.secondary.isEnabled, "conflict normalization disables secondary slot")
+    }
+
+    private static func shortcutDoubleTapDetectionLooksAcrossBothSlots() throws {
+        let config = ShortcutConfiguration(
+            primary: ShortcutTriggerSlot(triggerKey: .rightCommand, mode: .hold),
+            secondary: ShortcutTriggerSlot(triggerKey: .rightOption, mode: .doubleTapToggle)
+        )
+        try expect(config.usesDoubleTap, "double tap slider enables when secondary slot uses double tap")
+        try expect(config.enabledSlots.count == 2, "two non-conflicting slots are both enabled")
     }
 }

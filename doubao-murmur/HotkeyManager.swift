@@ -8,10 +8,39 @@ final class HotkeyManager {
         case cancel
     }
 
+    private final class RuntimeSlot {
+        let id: ShortcutSlotIdentifier
+        var shortcut: ShortcutTriggerSlot
+        var triggerKeyIsDown = false
+        var triggerPressStartTime: TimeInterval = 0
+        var holdStarted = false
+        var pendingHoldStart: DispatchWorkItem?
+        var otherKeyPressedWhileDown = false
+        var waitingForSecondTap = false
+        var secondTapTimeoutWorkItem: DispatchWorkItem?
+
+        init(id: ShortcutSlotIdentifier, shortcut: ShortcutTriggerSlot) {
+            self.id = id
+            self.shortcut = shortcut
+        }
+
+        func cancelTransientState() {
+            triggerKeyIsDown = false
+            holdStarted = false
+            waitingForSecondTap = false
+            otherKeyPressedWhileDown = false
+            pendingHoldStart?.cancel()
+            pendingHoldStart = nil
+            secondTapTimeoutWorkItem?.cancel()
+            secondTapTimeoutWorkItem = nil
+        }
+    }
+
     var onHotkeyEvent: ((HotkeyEvent) -> Void)?
 
     private let log = AppLog(category: "Hotkey")
     private var configuration: ShortcutConfiguration
+    private var runtimeSlots: [RuntimeSlot] = []
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var accessibilityPollTimer: Timer?
@@ -19,16 +48,9 @@ final class HotkeyManager {
     private let maxTapRetries = 30
     private var shouldConsumeEscape = false
 
-    private var triggerKeyIsDown = false
-    private var triggerPressStartTime: TimeInterval = 0
-    private var holdStarted = false
-    private var pendingHoldStart: DispatchWorkItem?
-    private var otherKeyPressedWhileDown = false
-    private var waitingForSecondTap = false
-    private var secondTapTimeoutWorkItem: DispatchWorkItem?
-
     init(configuration: ShortcutConfiguration) {
-        self.configuration = configuration
+        self.configuration = configuration.normalizedForRuntime()
+        rebuildRuntimeSlots()
         requestAccessibilityPermission()
     }
 
@@ -45,8 +67,7 @@ final class HotkeyManager {
     func stop() {
         accessibilityPollTimer?.invalidate()
         accessibilityPollTimer = nil
-        secondTapTimeoutWorkItem?.cancel()
-        pendingHoldStart?.cancel()
+        cancelTransientState()
 
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
@@ -59,9 +80,10 @@ final class HotkeyManager {
     }
 
     func updateConfiguration(_ configuration: ShortcutConfiguration) {
-        log.notice("shortcut updated key=\(configuration.triggerKey.rawValue) mode=\(configuration.mode.rawValue) doubleTap=\(configuration.doubleTapWindowMs)")
-        self.configuration = configuration
-        cancelTransientState()
+        let normalized = configuration.normalizedForRuntime()
+        log.notice("shortcut updated primary=\(normalized.primary.displaySummary) secondary=\(normalized.secondary.displaySummary) doubleTap=\(normalized.doubleTapWindowMs)")
+        self.configuration = normalized
+        rebuildRuntimeSlots()
     }
 
     func setEscapeHandlingEnabled(_ isEnabled: Bool) {
@@ -96,14 +118,17 @@ final class HotkeyManager {
             return nil
         }
 
-        if waitingForSecondTap, keyCode != configuration.triggerKey.keyCode {
-            waitingForSecondTap = false
-            secondTapTimeoutWorkItem?.cancel()
-            log.notice("double tap cancelled by keyCode=\(keyCode)")
-        }
+        for slot in runtimeSlots {
+            if slot.waitingForSecondTap, keyCode != slot.shortcut.triggerKey.keyCode {
+                slot.waitingForSecondTap = false
+                slot.secondTapTimeoutWorkItem?.cancel()
+                slot.secondTapTimeoutWorkItem = nil
+                log.notice("double tap cancelled slot=\(slot.id.rawValue) keyCode=\(keyCode)")
+            }
 
-        if triggerKeyIsDown, keyCode != configuration.triggerKey.keyCode {
-            otherKeyPressedWhileDown = true
+            if slot.triggerKeyIsDown, keyCode != slot.shortcut.triggerKey.keyCode {
+                slot.otherKeyPressedWhileDown = true
+            }
         }
 
         return Unmanaged.passRetained(event)
@@ -111,81 +136,86 @@ final class HotkeyManager {
 
     private func handleFlagsChanged(_ event: CGEvent) -> Unmanaged<CGEvent>? {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        guard keyCode == configuration.triggerKey.keyCode else {
+        let matchingSlots = runtimeSlots.filter { $0.shortcut.triggerKey.keyCode == keyCode }
+        guard !matchingSlots.isEmpty else {
             return Unmanaged.passRetained(event)
         }
 
-        let isDown = keyIsDown(for: configuration.triggerKey, flags: event.flags)
         let timestamp = ProcessInfo.processInfo.systemUptime
-
-        if isDown {
-            handleTriggerDown(at: timestamp)
-        } else {
-            handleTriggerUp(at: timestamp)
+        for slot in matchingSlots {
+            let isDown = keyIsDown(for: slot.shortcut.triggerKey, flags: event.flags)
+            if isDown {
+                handleTriggerDown(slot, at: timestamp)
+            } else {
+                handleTriggerUp(slot, at: timestamp)
+            }
         }
 
         return Unmanaged.passRetained(event)
     }
 
-    private func handleTriggerDown(at timestamp: TimeInterval) {
-        guard !triggerKeyIsDown else { return }
-        triggerKeyIsDown = true
-        triggerPressStartTime = timestamp
-        otherKeyPressedWhileDown = false
-        log.notice("trigger down key=\(configuration.triggerKey.rawValue) mode=\(configuration.mode.rawValue)")
+    private func handleTriggerDown(_ slot: RuntimeSlot, at timestamp: TimeInterval) {
+        guard !slot.triggerKeyIsDown else { return }
+        slot.triggerKeyIsDown = true
+        slot.triggerPressStartTime = timestamp
+        slot.otherKeyPressedWhileDown = false
+        log.notice("trigger down slot=\(slot.id.rawValue) key=\(slot.shortcut.triggerKey.rawValue) mode=\(slot.shortcut.mode.rawValue)")
 
-        switch configuration.mode {
+        switch slot.shortcut.mode {
         case .hold:
-            let workItem = DispatchWorkItem { [weak self] in
-                guard let self, self.triggerKeyIsDown else { return }
-                self.holdStarted = true
-                self.onHotkeyEvent?(.startRecording)
-            }
-            pendingHoldStart = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(80), execute: workItem)
-        case .singleTapToggle, .doubleTapToggle:
+            slot.holdStarted = true
+            onHotkeyEvent?(.startRecording)
+        case .none, .singleTapToggle, .doubleTapToggle:
             break
         }
     }
 
-    private func handleTriggerUp(at timestamp: TimeInterval) {
-        guard triggerKeyIsDown else { return }
-        triggerKeyIsDown = false
-        pendingHoldStart?.cancel()
-        pendingHoldStart = nil
+    private func handleTriggerUp(_ slot: RuntimeSlot, at timestamp: TimeInterval) {
+        guard slot.triggerKeyIsDown else { return }
+        slot.triggerKeyIsDown = false
+        slot.pendingHoldStart?.cancel()
+        slot.pendingHoldStart = nil
 
-        let pressDuration = timestamp - triggerPressStartTime
-        log.notice("trigger up mode=\(configuration.mode.rawValue) duration=\(pressDuration) waitingSecondTap=\(waitingForSecondTap)")
+        let pressDuration = timestamp - slot.triggerPressStartTime
+        log.notice("trigger up slot=\(slot.id.rawValue) mode=\(slot.shortcut.mode.rawValue) duration=\(pressDuration) waitingSecondTap=\(slot.waitingForSecondTap)")
         defer {
-            holdStarted = false
+            slot.holdStarted = false
         }
 
-        switch configuration.mode {
+        switch slot.shortcut.mode {
+        case .none:
+            break
         case .hold:
-            if holdStarted {
-                onHotkeyEvent?(.stopRecording)
+            if slot.holdStarted {
+                if pressDuration < 0.08 {
+                    log.notice("hold cancelled as accidental press slot=\(slot.id.rawValue) duration=\(pressDuration)")
+                    onHotkeyEvent?(.cancel)
+                } else {
+                    onHotkeyEvent?(.stopRecording)
+                }
             } else if pressDuration < 0.08 {
-                log.notice("hold ignored as accidental press duration=\(pressDuration)")
+                log.notice("hold ignored as accidental press slot=\(slot.id.rawValue) duration=\(pressDuration)")
             }
         case .singleTapToggle:
-            guard !otherKeyPressedWhileDown else { return }
+            guard !slot.otherKeyPressedWhileDown else { return }
             onHotkeyEvent?(.toggleRecording)
         case .doubleTapToggle:
-            guard !otherKeyPressedWhileDown else { return }
-            if waitingForSecondTap {
-                waitingForSecondTap = false
-                secondTapTimeoutWorkItem?.cancel()
-                secondTapTimeoutWorkItem = nil
-                log.notice("double tap recognized")
+            guard !slot.otherKeyPressedWhileDown else { return }
+            if slot.waitingForSecondTap {
+                slot.waitingForSecondTap = false
+                slot.secondTapTimeoutWorkItem?.cancel()
+                slot.secondTapTimeoutWorkItem = nil
+                log.notice("double tap recognized slot=\(slot.id.rawValue)")
                 onHotkeyEvent?(.toggleRecording)
             } else {
-                waitingForSecondTap = true
-                log.notice("double tap armed window=\(configuration.doubleTapWindowMs)")
-                let timeout = DispatchWorkItem { [weak self] in
-                    self?.log.notice("double tap window expired")
-                    self?.waitingForSecondTap = false
+                slot.waitingForSecondTap = true
+                log.notice("double tap armed slot=\(slot.id.rawValue) window=\(configuration.doubleTapWindowMs)")
+                let timeout = DispatchWorkItem { [weak self, weak slot] in
+                    guard let self, let slot else { return }
+                    self.log.notice("double tap window expired slot=\(slot.id.rawValue)")
+                    slot.waitingForSecondTap = false
                 }
-                secondTapTimeoutWorkItem = timeout
+                slot.secondTapTimeoutWorkItem = timeout
                 DispatchQueue.main.asyncAfter(
                     deadline: .now() + .milliseconds(configuration.doubleTapWindowMs),
                     execute: timeout
@@ -249,13 +279,15 @@ final class HotkeyManager {
         }
     }
 
+    private func rebuildRuntimeSlots() {
+        cancelTransientState()
+        runtimeSlots = configuration.enabledSlots.map { id, shortcut in
+            RuntimeSlot(id: id, shortcut: shortcut)
+        }
+    }
+
     private func cancelTransientState() {
-        triggerKeyIsDown = false
-        holdStarted = false
-        waitingForSecondTap = false
-        otherKeyPressedWhileDown = false
-        pendingHoldStart?.cancel()
-        secondTapTimeoutWorkItem?.cancel()
+        runtimeSlots.forEach { $0.cancelTransientState() }
     }
 }
 
