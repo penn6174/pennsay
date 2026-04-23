@@ -105,6 +105,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func setupHotkey() {
         hotkeyManager = HotkeyManager(configuration: settingsStore.shortcutConfiguration)
+        hotkeyManager.onAccessibilityStaleDetected = { [weak self] in
+            DispatchQueue.main.async {
+                self?.presentAccessibilityStaleAlert()
+            }
+        }
+    }
+
+    /// Shown when HotkeyManager detects the "trusted but tap refused"
+    /// combination — ad-hoc signature hash mismatch against the stored TCC
+    /// record. We can't fix it from the app sandbox, but we can walk the
+    /// user through the minimum recovery path in one dialog.
+    private var hasShownAccessibilityStaleAlert = false
+    private func presentAccessibilityStaleAlert() {
+        guard !hasShownAccessibilityStaleAlert else { return }
+        hasShownAccessibilityStaleAlert = true
+
+        let alert = NSAlert()
+        alert.messageText = "\(AppEnvironment.displayName) 辅助功能授权失效"
+        alert.informativeText = """
+        升级后应用签名变化，macOS 的辅助功能授权记录与新签名不匹配（系统设置里的开关看着是开的，但快捷键监听被拒绝）。
+
+        修复方法：
+        1. 点击下方“打开辅助功能设置”
+        2. 在列表里找到 \(AppEnvironment.displayName) ➜ 点一下减号删除旧条目
+        3. 点加号 ➜ 选 /Applications/\(AppEnvironment.displayName).app 重新添加
+        4. 确认新条目开关开启，然后返回本应用
+
+        下次再看到这个对话框通常是下一次升级触发。正常 brew 升级路径会自动清理，极少触发。
+        """
+        alert.addButton(withTitle: "打开辅助功能设置")
+        alert.addButton(withTitle: "我已处理")
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func setupTranscription() {
@@ -158,28 +195,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.autoUpdateScheduler?.checkOnVoiceUse()
             }
             .store(in: &cancellables)
+
     }
 
     private func updateStatusButton() {
         guard let button = statusItem.button else { return }
+        // Idle → plain colorful 🥷 emoji. Active recording → the same
+        // 🥷 silhouette but composited on top of a ⚔️ (crossed-swords)
+        // glyph so the hilts/tips peek out from behind the ninja,
+        // giving a "sheathed blades revealed" visual without expanding
+        // the menu-bar footprint.
         switch appState.recordingState {
-        case .recording, .starting:
-            // Active recording — use the colorful mic SF Symbol so the
-            // menu bar reflects "currently capturing" at a glance.
+        case .recording, .starting, .stopping, .refining:
             button.title = ""
-            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: AppEnvironment.displayName)
-        case .stopping, .refining:
-            button.title = ""
-            button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: AppEnvironment.displayName)
+            button.image = Self.ninjaWithCrossedSwordsImage
         case .idle:
-            // Idle default — the ninja emoji is the Penn-identity icon
-            // (renders in color automatically on macOS 11+).
-            button.image = nil
-            button.title = "🥷"
+            button.title = ""
+            button.image = Self.coloredNinjaImage
         }
         button.toolTip = AppEnvironment.displayName
         configureStatusBadge(on: button)
         updateBadgeView.count = appState.availableUpdateBadgeCount
+    }
+
+    // MARK: - Menu bar icon rendering
+
+    /// Size the ninja glyph is rasterized at. Chosen to match the natural
+    /// height of SF Symbol glyphs on the macOS menu bar.
+    private static let menuBarGlyphPointSize: CGFloat = 15
+
+    /// Idle icon — just the colorful ninja, no compositing.
+    private static let coloredNinjaImage: NSImage = renderEmojiColored("🥷")
+
+    /// Active-state icon — ⚔️ drawn first (centered), 🥷 drawn on top
+    /// at 100% overlap. Canvas size matches the ninja's footprint so the
+    /// menu bar doesn't widen; the crossed-sword tips/hilts that extend
+    /// beyond the ninja silhouette create the "swords behind ninja"
+    /// composition while everything that falls under the ninja is simply
+    /// covered.
+    private static let ninjaWithCrossedSwordsImage: NSImage = renderNinjaWithCrossedSwords()
+
+    private static func renderNinjaWithCrossedSwords() -> NSImage {
+        let ninjaAttr = NSAttributedString(
+            string: "🥷",
+            attributes: [.font: NSFont.systemFont(ofSize: menuBarGlyphPointSize)]
+        )
+        // Match the ninja's point size so the swords' natural geometry
+        // places the hilts/tips just outside the ninja silhouette.
+        let swordsAttr = NSAttributedString(
+            string: "⚔️",
+            attributes: [.font: NSFont.systemFont(ofSize: menuBarGlyphPointSize)]
+        )
+
+        let ninjaSize = ninjaAttr.size()
+        let swordsSize = swordsAttr.size()
+        let canvas = NSSize(
+            width: max(1, ceil(ninjaSize.width)),
+            height: max(1, ceil(ninjaSize.height))
+        )
+
+        let image = NSImage(size: canvas)
+        image.lockFocus()
+        // Swords first — behind. Centered on the canvas; overflow is
+        // clipped, which is fine because we want only the tips/hilts
+        // showing outside the ninja's silhouette.
+        let swordsOrigin = NSPoint(
+            x: (canvas.width - swordsSize.width) / 2,
+            y: (canvas.height - swordsSize.height) / 2
+        )
+        swordsAttr.draw(at: swordsOrigin)
+        // Ninja on top — covers the middle portion of the swords.
+        let ninjaOrigin = NSPoint(
+            x: (canvas.width - ninjaSize.width) / 2,
+            y: (canvas.height - ninjaSize.height) / 2
+        )
+        ninjaAttr.draw(at: ninjaOrigin)
+        image.unlockFocus()
+        return image
+    }
+
+    /// Full-color emoji, rasterized at the menu-bar glyph size.
+    private static func renderEmojiColored(_ emoji: String) -> NSImage {
+        let attributed = NSAttributedString(
+            string: emoji,
+            attributes: [.font: NSFont.systemFont(ofSize: menuBarGlyphPointSize)]
+        )
+        let textSize = attributed.size()
+        let canvas = NSSize(
+            width: max(1, ceil(textSize.width)),
+            height: max(1, ceil(textSize.height))
+        )
+        let image = NSImage(size: canvas)
+        image.lockFocus()
+        attributed.draw(at: .zero)
+        image.unlockFocus()
+        return image
     }
 
     private func configureStatusBadge(on button: NSStatusBarButton) {

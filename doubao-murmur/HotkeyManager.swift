@@ -77,6 +77,14 @@ final class HotkeyManager {
 
     var onHotkeyEvent: ((HotkeyEvent) -> Void)?
     var isRecordingSessionActive: (() -> Bool)?
+    /// Fires when `CGEventTap` creation keeps failing **while**
+    /// `AXIsProcessTrusted()` reports the process IS trusted — the classic
+    /// ad-hoc-signature TCC staleness symptom (System Settings shows the
+    /// app authorized but the hash-bound kernel check disagrees). The
+    /// recovery is user-manual: Settings → Accessibility → remove the
+    /// stale PennSay entry → re-add the current bundle.
+    var onAccessibilityStaleDetected: (() -> Void)?
+    private var hasReportedAccessibilityStale = false
 
     private let log = AppLog(category: "Hotkey")
     private var configuration: ShortcutConfiguration
@@ -329,7 +337,20 @@ final class HotkeyManager {
         accessibilityPollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
             guard let self else { return }
             self.tapRetryCount += 1
-            if self.tryCreateEventTap() || self.tapRetryCount >= self.maxTapRetries {
+            if self.tryCreateEventTap() {
+                self.hasReportedAccessibilityStale = false
+                timer.invalidate()
+                return
+            }
+            // If the system swears we're trusted but the event-tap keeps
+            // being refused, the TCC record is stale (hash mismatch after
+            // an ad-hoc re-sign). Fire once so the AppDelegate can show
+            // recovery guidance — don't spam on every retry.
+            if !self.hasReportedAccessibilityStale, AXIsProcessTrusted() {
+                self.hasReportedAccessibilityStale = true
+                self.onAccessibilityStaleDetected?()
+            }
+            if self.tapRetryCount >= self.maxTapRetries {
                 timer.invalidate()
             }
         }
