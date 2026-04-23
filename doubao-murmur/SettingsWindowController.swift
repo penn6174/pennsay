@@ -164,14 +164,11 @@ private struct ShortcutSettingsView: View {
             }
 
             Section {
-                if draftConfiguration.hasKeyConflict {
-                    Text("两个触发方式不能使用同一个按键。请把其中一个设为“无”，或选择不同按键。")
-                        .foregroundStyle(.red)
-                }
+                Text("同一按键可同时绑定两种触发方式；设为“无”表示禁用该栏。相同动作若重复绑定，运行时只保留一份。")
+                    .foregroundStyle(.secondary)
                 Button("Save") {
                     store.updateShortcut(draftConfiguration)
                 }
-                .disabled(draftConfiguration.hasKeyConflict)
             }
         }
         .formStyle(.grouped)

@@ -22,7 +22,7 @@ struct VoiceInputCoreTestHarness {
         try valuesStayWithinBounds()
         try shortcutDefaultHasOneEnabledSlot()
         try shortcutNoneSlotDoesNotEnable()
-        try shortcutConflictDisablesSecondaryAtRuntime()
+        try shortcutSameKeyDualModesRemainEnabled()
         try shortcutDoubleTapDetectionLooksAcrossBothSlots()
     }
 
@@ -71,15 +71,16 @@ struct VoiceInputCoreTestHarness {
         try expect(slot.displaySummary == "无", "none mode displays as Chinese none label")
     }
 
-    private static func shortcutConflictDisablesSecondaryAtRuntime() throws {
+    private static func shortcutSameKeyDualModesRemainEnabled() throws {
         let config = ShortcutConfiguration(
             primary: ShortcutTriggerSlot(triggerKey: .rightCommand, mode: .hold),
             secondary: ShortcutTriggerSlot(triggerKey: .rightCommand, mode: .doubleTapToggle)
         )
-        try expect(config.hasKeyConflict, "same key in both enabled slots is detected as conflict")
+        try expect(!config.hasKeyConflict, "same key in both enabled slots is allowed")
         let normalized = config.normalizedForRuntime()
-        try expect(normalized.primary.isEnabled, "conflict normalization keeps primary slot")
-        try expect(!normalized.secondary.isEnabled, "conflict normalization disables secondary slot")
+        try expect(normalized.primary.isEnabled, "same-key runtime keeps primary slot enabled")
+        try expect(normalized.secondary.isEnabled, "same-key runtime keeps secondary slot enabled")
+        try expect(normalized.enabledSlots.count == 2, "same-key dual-mode configuration exposes both enabled slots")
     }
 
     private static func shortcutDoubleTapDetectionLooksAcrossBothSlots() throws {

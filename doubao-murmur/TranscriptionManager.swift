@@ -195,6 +195,10 @@ final class TranscriptionManager {
     }
 
     private func startRecording() {
+        guard appState.recordingState == .idle else {
+            return
+        }
+
         guard appState.loginStatus == .loggedIn else {
             log.notice("recording requested while logged out")
             webViewManager.showLoginWindow()

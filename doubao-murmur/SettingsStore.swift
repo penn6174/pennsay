@@ -21,7 +21,7 @@ final class SettingsStore: ObservableObject {
     }
 
     private enum ShortcutDefaults {
-        static let currentVersion = 3
+        static let currentVersion = 4
     }
 
     @Published private(set) var shortcutConfiguration: ShortcutConfiguration
@@ -172,11 +172,6 @@ final class SettingsStore: ObservableObject {
         if shortcutConfiguration.doubleTapWindowMs == ShortcutConfiguration.previousDefaultDoubleTapWindowMs {
             shortcutConfiguration.doubleTapWindowMs = ShortcutConfiguration.defaultDoubleTapWindowMs
             defaults.set(shortcutConfiguration.doubleTapWindowMs, forKey: Keys.shortcutDoubleTapWindowMs)
-        }
-
-        if shortcutConfiguration.hasKeyConflict {
-            shortcutConfiguration = shortcutConfiguration.normalizedForRuntime()
-            defaults.set(shortcutConfiguration.secondary.mode.rawValue, forKey: Keys.shortcutSecondaryMode)
         }
 
         defaults.set(ShortcutDefaults.currentVersion, forKey: Keys.shortcutDefaultsVersion)

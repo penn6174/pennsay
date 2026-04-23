@@ -159,9 +159,7 @@ public struct ShortcutConfiguration: Codable, Equatable, Sendable {
     }
 
     public var hasKeyConflict: Bool {
-        primary.isEnabled
-            && secondary.isEnabled
-            && primary.triggerKey == secondary.triggerKey
+        false
     }
 
     public var usesDoubleTap: Bool {
@@ -175,10 +173,7 @@ public struct ShortcutConfiguration: Codable, Equatable, Sendable {
     }
 
     public func normalizedForRuntime() -> ShortcutConfiguration {
-        guard hasKeyConflict else { return self }
-        var copy = self
-        copy.secondary.mode = .none
-        return copy
+        self
     }
 
     public static func clampDoubleTapWindowMs(_ value: Int) -> Int {
