@@ -64,7 +64,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setupStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Square length locks the button to Apple's standard status-item
+        // footprint (same as WiFi / battery / 铃铛 etc.), eliminating the
+        // right-side padding that NSStatusBarButton adds to
+        // variable-length items when the content is a Unicode title.
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.menu = NSMenu()
         statusItem.menu?.delegate = self
         updateStatusButton()
@@ -200,96 +204,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateStatusButton() {
         guard let button = statusItem.button else { return }
-        // Idle → plain colorful 🥷 emoji. Active recording → the same
-        // 🥷 silhouette but composited on top of a ⚔️ (crossed-swords)
-        // glyph so the hilts/tips peek out from behind the ninja,
-        // giving a "sheathed blades revealed" visual without expanding
-        // the menu-bar footprint.
-        switch appState.recordingState {
-        case .recording, .starting, .stopping, .refining:
-            button.title = ""
-            button.image = Self.ninjaWithCrossedSwordsImage
-        case .idle:
-            button.title = ""
-            button.image = Self.coloredNinjaImage
-        }
+        // Minimal, state-invariant: a single colorful ninja emoji rendered
+        // as the button's title. AppKit handles the font + sizing via its
+        // standard menu-bar metrics, so no manual canvas, no advance-width
+        // padding, no recording-state swap. The red update-badge subview
+        // still layers on top — it's added once in `configureStatusBadge`.
+        button.image = nil
+        button.title = "🥷"
         button.toolTip = AppEnvironment.displayName
         configureStatusBadge(on: button)
         updateBadgeView.count = appState.availableUpdateBadgeCount
-    }
-
-    // MARK: - Menu bar icon rendering
-
-    /// Size the ninja glyph is rasterized at. Chosen to match the natural
-    /// height of SF Symbol glyphs on the macOS menu bar.
-    private static let menuBarGlyphPointSize: CGFloat = 15
-
-    /// Idle icon — just the colorful ninja, no compositing.
-    private static let coloredNinjaImage: NSImage = renderEmojiColored("🥷")
-
-    /// Active-state icon — ⚔️ drawn first (centered), 🥷 drawn on top
-    /// at 100% overlap. Canvas size matches the ninja's footprint so the
-    /// menu bar doesn't widen; the crossed-sword tips/hilts that extend
-    /// beyond the ninja silhouette create the "swords behind ninja"
-    /// composition while everything that falls under the ninja is simply
-    /// covered.
-    private static let ninjaWithCrossedSwordsImage: NSImage = renderNinjaWithCrossedSwords()
-
-    private static func renderNinjaWithCrossedSwords() -> NSImage {
-        let ninjaAttr = NSAttributedString(
-            string: "🥷",
-            attributes: [.font: NSFont.systemFont(ofSize: menuBarGlyphPointSize)]
-        )
-        // Match the ninja's point size so the swords' natural geometry
-        // places the hilts/tips just outside the ninja silhouette.
-        let swordsAttr = NSAttributedString(
-            string: "⚔️",
-            attributes: [.font: NSFont.systemFont(ofSize: menuBarGlyphPointSize)]
-        )
-
-        let ninjaSize = ninjaAttr.size()
-        let swordsSize = swordsAttr.size()
-        let canvas = NSSize(
-            width: max(1, ceil(ninjaSize.width)),
-            height: max(1, ceil(ninjaSize.height))
-        )
-
-        let image = NSImage(size: canvas)
-        image.lockFocus()
-        // Swords first — behind. Centered on the canvas; overflow is
-        // clipped, which is fine because we want only the tips/hilts
-        // showing outside the ninja's silhouette.
-        let swordsOrigin = NSPoint(
-            x: (canvas.width - swordsSize.width) / 2,
-            y: (canvas.height - swordsSize.height) / 2
-        )
-        swordsAttr.draw(at: swordsOrigin)
-        // Ninja on top — covers the middle portion of the swords.
-        let ninjaOrigin = NSPoint(
-            x: (canvas.width - ninjaSize.width) / 2,
-            y: (canvas.height - ninjaSize.height) / 2
-        )
-        ninjaAttr.draw(at: ninjaOrigin)
-        image.unlockFocus()
-        return image
-    }
-
-    /// Full-color emoji, rasterized at the menu-bar glyph size.
-    private static func renderEmojiColored(_ emoji: String) -> NSImage {
-        let attributed = NSAttributedString(
-            string: emoji,
-            attributes: [.font: NSFont.systemFont(ofSize: menuBarGlyphPointSize)]
-        )
-        let textSize = attributed.size()
-        let canvas = NSSize(
-            width: max(1, ceil(textSize.width)),
-            height: max(1, ceil(textSize.height))
-        )
-        let image = NSImage(size: canvas)
-        image.lockFocus()
-        attributed.draw(at: .zero)
-        image.unlockFocus()
-        return image
     }
 
     private func configureStatusBadge(on button: NSStatusBarButton) {
