@@ -6,13 +6,10 @@ final class SupportDiagnosticsManager {
     static let shared = SupportDiagnosticsManager()
 
     private enum DiagnosticsError: LocalizedError {
-        case emailUnavailable
         case archiveCreationFailed
 
         var errorDescription: String? {
             switch self {
-            case .emailUnavailable:
-                return "当前系统没有可用的邮件撰写服务。"
             case .archiveCreationFailed:
                 return "无法生成诊断日志压缩包。"
             }
@@ -76,36 +73,12 @@ final class SupportDiagnosticsManager {
         }
     }
 
-    func composeSupportEmail(reason: String) throws {
-        let archiveURL = try createDiagnosticsArchive(reason: reason)
-        guard let service = NSSharingService(named: .composeEmail) else {
-            throw DiagnosticsError.emailUnavailable
-        }
-
-        service.recipients = [AppEnvironment.supportEmail]
-        service.subject = "\(AppEnvironment.displayName) 诊断日志 - \(reason)"
-        service.perform(withItems: [composeEmailBody(reason: reason), archiveURL])
-        log.notice("opened support email composer with \(archiveURL.lastPathComponent)")
-    }
-
     private var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
     private var currentBuild: String {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
-    }
-
-    private func composeEmailBody(reason: String) -> String {
-        """
-        请描述你遇到的问题（崩溃 / 卡死 / 重启后异常 / 识别错误等）。
-
-        应用：\(AppEnvironment.displayName)
-        版本：\(currentVersion) (\(currentBuild))
-        系统：\(ProcessInfo.processInfo.operatingSystemVersionString)
-        原因：\(reason)
-        联系邮箱：\(AppEnvironment.supportEmail)
-        """
     }
 
     private func createDiagnosticsArchive(reason: String) throws -> URL {
@@ -144,7 +117,6 @@ final class SupportDiagnosticsManager {
         macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
         Generated At: \(ISO8601DateFormatter().string(from: Date()))
         Reason: \(reason)
-        Support Email: \(AppEnvironment.supportEmail)
         Logs Directory: \(AppEnvironment.logsDirectoryURL.path)
         """
         try text.write(to: url, atomically: true, encoding: .utf8)

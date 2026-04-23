@@ -207,9 +207,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let logsItem = NSMenuItem(title: "打开日志文件夹", action: #selector(openLogsFolder), keyEquivalent: "")
         menu.addItem(logsItem)
 
-        let supportItem = NSMenuItem(title: "联系支持并附带日志...", action: #selector(contactSupport), keyEquivalent: "")
-        menu.addItem(supportItem)
-
         let updateItem = NSMenuItem(title: "检查更新", action: #selector(checkForUpdates), keyEquivalent: "u")
         if appState.hasAvailableUpdate {
             updateItem.image = Self.makeMenuBadgeImage(count: appState.availableUpdateBadgeCount)
@@ -350,7 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
         alert.messageText = AppEnvironment.displayName
-        alert.informativeText = "Version \(version) (\(build))\n\(AppEnvironment.madeByLine)\nSupport: \(AppEnvironment.supportEmail)"
+        alert.informativeText = "Version \(version) (\(build))\n\(AppEnvironment.madeByLine)"
         alert.addButton(withTitle: "好的")
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
@@ -369,43 +366,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(AppEnvironment.ensureLogsDirectoryExists())
     }
 
-    @objc private func contactSupport() {
-        sendSupportEmail(reason: "用户手动反馈")
-    }
-
     private func promptToSendDiagnosticsAfterUnexpectedExit() {
         let alert = NSAlert()
         alert.messageText = "检测到上次未正常退出"
-        alert.informativeText = "\(AppEnvironment.displayName) 上次可能发生了崩溃、卡死或被强制退出。现在可以把本地日志打包进邮件草稿，发送到 \(AppEnvironment.supportEmail) 以便排查。"
-        alert.addButton(withTitle: "生成邮件")
+        alert.informativeText = "\(AppEnvironment.displayName) 上次可能发生了崩溃、卡死或被强制退出。你可以先查看本地日志目录，必要时再自行处理诊断文件。"
         alert.addButton(withTitle: "打开日志文件夹")
         alert.addButton(withTitle: "稍后")
         NSApp.activate(ignoringOtherApps: true)
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            sendSupportEmail(reason: "异常退出后重启")
-        case .alertSecondButtonReturn:
             openLogsFolder()
         default:
             break
-        }
-    }
-
-    private func sendSupportEmail(reason: String) {
-        do {
-            try diagnosticsManager.composeSupportEmail(reason: reason)
-        } catch {
-            log.error("support email compose failed: \(error.localizedDescription)")
-            let alert = NSAlert()
-            alert.messageText = "无法生成诊断邮件"
-            alert.informativeText = "\(error.localizedDescription)\n\n你也可以手动把日志目录里的文件发送到 \(AppEnvironment.supportEmail)。"
-            alert.addButton(withTitle: "打开日志文件夹")
-            alert.addButton(withTitle: "好的")
-            NSApp.activate(ignoringOtherApps: true)
-            if alert.runModal() == .alertFirstButtonReturn {
-                openLogsFolder()
-            }
         }
     }
 

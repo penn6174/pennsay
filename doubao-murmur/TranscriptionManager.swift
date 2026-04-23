@@ -44,6 +44,9 @@ final class TranscriptionManager {
         self.overlayPanel = overlayPanel
         self.hotkeyManager = hotkeyManager
         self.settingsStore = settingsStore
+        self.hotkeyManager.isRecordingSessionActive = { [weak appState] in
+            appState?.isRecording ?? false
+        }
     }
 
     func start() {

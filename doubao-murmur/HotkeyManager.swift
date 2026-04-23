@@ -14,7 +14,8 @@ final class HotkeyManager {
         var triggerKeyIsDown = false
         var triggerPressStartTime: TimeInterval = 0
         var holdStarted = false
-        var pendingHoldStart: DispatchWorkItem?
+        var holdCommitted = false
+        var pendingHoldCommit: DispatchWorkItem?
         var otherKeyPressedWhileDown = false
         var waitingForSecondTap = false
         var secondTapTimeoutWorkItem: DispatchWorkItem?
@@ -54,16 +55,18 @@ final class HotkeyManager {
         func cancelTransientState() {
             triggerKeyIsDown = false
             holdStarted = false
+            holdCommitted = false
             waitingForSecondTap = false
             otherKeyPressedWhileDown = false
-            pendingHoldStart?.cancel()
-            pendingHoldStart = nil
+            pendingHoldCommit?.cancel()
+            pendingHoldCommit = nil
             secondTapTimeoutWorkItem?.cancel()
             secondTapTimeoutWorkItem = nil
         }
     }
 
     var onHotkeyEvent: ((HotkeyEvent) -> Void)?
+    var isRecordingSessionActive: (() -> Bool)?
 
     private let log = AppLog(category: "Hotkey")
     private var configuration: ShortcutConfiguration
@@ -74,7 +77,7 @@ final class HotkeyManager {
     private var tapRetryCount = 0
     private let maxTapRetries = 30
     private var shouldConsumeEscape = false
-    private let sharedHoldActivationDelay: TimeInterval = 0.08
+    private let sharedHoldCommitDelay: TimeInterval = 0.18
     private let accidentalHoldPressThreshold: TimeInterval = 0.08
 
     init(configuration: ShortcutConfiguration) {
@@ -194,27 +197,43 @@ final class HotkeyManager {
         }
 
         guard runtimeKey.supportsHold else { return }
+        let sessionActive = isRecordingSessionActive?() ?? false
         if runtimeKey.requiresHoldDelay {
-            scheduleSharedHoldStart(for: runtimeKey)
+            guard !sessionActive else { return }
+            startHold(for: runtimeKey, committed: false)
+            scheduleSharedHoldCommit(for: runtimeKey)
         } else {
-            startHold(for: runtimeKey)
+            guard !sessionActive else { return }
+            startHold(for: runtimeKey, committed: true)
         }
     }
 
     private func handleTriggerUp(_ runtimeKey: RuntimeKey, at timestamp: TimeInterval) {
         guard runtimeKey.triggerKeyIsDown else { return }
         runtimeKey.triggerKeyIsDown = false
-        runtimeKey.pendingHoldStart?.cancel()
-        runtimeKey.pendingHoldStart = nil
+        runtimeKey.pendingHoldCommit?.cancel()
+        runtimeKey.pendingHoldCommit = nil
 
         let pressDuration = timestamp - runtimeKey.triggerPressStartTime
-        log.notice("trigger up key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary) duration=\(pressDuration) holdStarted=\(runtimeKey.holdStarted) waitingSecondTap=\(runtimeKey.waitingForSecondTap)")
+        log.notice("trigger up key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary) duration=\(pressDuration) holdStarted=\(runtimeKey.holdStarted) holdCommitted=\(runtimeKey.holdCommitted) waitingSecondTap=\(runtimeKey.waitingForSecondTap)")
         defer {
             runtimeKey.holdStarted = false
+            runtimeKey.holdCommitted = false
             runtimeKey.otherKeyPressedWhileDown = false
         }
 
         if runtimeKey.holdStarted {
+            if !runtimeKey.holdCommitted {
+                log.notice("shared hold reverted to tap key=\(runtimeKey.triggerKey.rawValue) duration=\(pressDuration)")
+                onHotkeyEvent?(.cancel)
+                guard !runtimeKey.otherKeyPressedWhileDown else {
+                    cancelTapSequence(for: runtimeKey, reason: "chord")
+                    return
+                }
+                handleTapGesture(for: runtimeKey)
+                return
+            }
+
             if !runtimeKey.requiresHoldDelay, pressDuration < accidentalHoldPressThreshold {
                 log.notice("hold cancelled as accidental press key=\(runtimeKey.triggerKey.rawValue) duration=\(pressDuration)")
                 onHotkeyEvent?(.cancel)
@@ -229,24 +248,7 @@ final class HotkeyManager {
             return
         }
 
-        if runtimeKey.supportsDoubleTap {
-            if runtimeKey.waitingForSecondTap {
-                runtimeKey.waitingForSecondTap = false
-                runtimeKey.secondTapTimeoutWorkItem?.cancel()
-                runtimeKey.secondTapTimeoutWorkItem = nil
-                log.notice("double tap recognized key=\(runtimeKey.triggerKey.rawValue)")
-                onHotkeyEvent?(.toggleRecording)
-            } else {
-                armTapSequence(for: runtimeKey)
-            }
-            return
-        }
-
-        if runtimeKey.supportsSingleTap {
-            log.notice("single tap recognized key=\(runtimeKey.triggerKey.rawValue)")
-            onHotkeyEvent?(.toggleRecording)
-            return
-        }
+        handleTapGesture(for: runtimeKey)
 
         if pressDuration < accidentalHoldPressThreshold {
             log.notice("hold ignored as accidental press key=\(runtimeKey.triggerKey.rawValue) duration=\(pressDuration)")
@@ -308,29 +310,67 @@ final class HotkeyManager {
         }
     }
 
-    private func scheduleSharedHoldStart(for runtimeKey: RuntimeKey) {
-        runtimeKey.pendingHoldStart?.cancel()
+    private func scheduleSharedHoldCommit(for runtimeKey: RuntimeKey) {
+        runtimeKey.pendingHoldCommit?.cancel()
         let workItem = DispatchWorkItem { [weak self, weak runtimeKey] in
             guard let self, let runtimeKey else { return }
-            guard runtimeKey.triggerKeyIsDown, !runtimeKey.holdStarted, !runtimeKey.otherKeyPressedWhileDown else {
+            guard runtimeKey.triggerKeyIsDown, runtimeKey.holdStarted, !runtimeKey.holdCommitted, !runtimeKey.otherKeyPressedWhileDown else {
                 return
             }
-            self.startHold(for: runtimeKey)
+            self.commitSharedHold(for: runtimeKey)
         }
-        runtimeKey.pendingHoldStart = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + sharedHoldActivationDelay, execute: workItem)
+        runtimeKey.pendingHoldCommit = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + sharedHoldCommitDelay, execute: workItem)
     }
 
-    private func startHold(for runtimeKey: RuntimeKey) {
-        runtimeKey.pendingHoldStart?.cancel()
-        runtimeKey.pendingHoldStart = nil
+    private func startHold(for runtimeKey: RuntimeKey, committed: Bool) {
+        guard !runtimeKey.holdStarted else {
+            if committed {
+                commitSharedHold(for: runtimeKey)
+            }
+            return
+        }
+
+        runtimeKey.holdStarted = true
+        runtimeKey.holdCommitted = committed
+        if committed {
+            runtimeKey.waitingForSecondTap = false
+            runtimeKey.secondTapTimeoutWorkItem?.cancel()
+            runtimeKey.secondTapTimeoutWorkItem = nil
+        }
+        log.notice("hold started key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary) committed=\(committed)")
+        onHotkeyEvent?(.startRecording)
+    }
+
+    private func commitSharedHold(for runtimeKey: RuntimeKey) {
+        runtimeKey.pendingHoldCommit?.cancel()
+        runtimeKey.pendingHoldCommit = nil
+        guard runtimeKey.holdStarted, !runtimeKey.holdCommitted else { return }
+        runtimeKey.holdCommitted = true
         runtimeKey.waitingForSecondTap = false
         runtimeKey.secondTapTimeoutWorkItem?.cancel()
         runtimeKey.secondTapTimeoutWorkItem = nil
-        guard !runtimeKey.holdStarted else { return }
-        runtimeKey.holdStarted = true
-        log.notice("hold started key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary)")
-        onHotkeyEvent?(.startRecording)
+        log.notice("shared hold committed key=\(runtimeKey.triggerKey.rawValue) modes=\(runtimeKey.modeSummary)")
+    }
+
+    private func handleTapGesture(for runtimeKey: RuntimeKey) {
+        if runtimeKey.supportsDoubleTap {
+            if runtimeKey.waitingForSecondTap {
+                runtimeKey.waitingForSecondTap = false
+                runtimeKey.secondTapTimeoutWorkItem?.cancel()
+                runtimeKey.secondTapTimeoutWorkItem = nil
+                log.notice("double tap recognized key=\(runtimeKey.triggerKey.rawValue)")
+                onHotkeyEvent?(.toggleRecording)
+            } else {
+                armTapSequence(for: runtimeKey)
+            }
+            return
+        }
+
+        if runtimeKey.supportsSingleTap {
+            log.notice("single tap recognized key=\(runtimeKey.triggerKey.rawValue)")
+            onHotkeyEvent?(.toggleRecording)
+        }
     }
 
     private func armTapSequence(for runtimeKey: RuntimeKey) {

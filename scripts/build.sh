@@ -77,6 +77,12 @@ fi
 echo "Building $APP_NAME ($CONFIGURATION) v$VERSION..."
 swiftc "${SWIFT_FLAGS[@]}"
 
+# `swiftc -g` may drop a dSYM bundle inside the app's MacOS directory. Under
+# iCloud-backed workspaces that bundle often picks up Finder/File Provider
+# metadata and breaks ad-hoc codesign, while the app itself does not need the
+# embedded dSYM to run.
+rm -rf "$MACOS_DIR/$APP_NAME.dSYM" "$BUILD_DIR/$APP_NAME.dSYM"
+
 cp "$ROOT_DIR/doubao-murmur/Resources/"*.js "$RESOURCES_DIR/"
 cp "$ROOT_DIR/doubao-murmur/Resources/AppIcon.icns" "$RESOURCES_DIR/"
 cp "$ROOT_DIR/doubao-murmur/Info.plist" "$INFO_PLIST"

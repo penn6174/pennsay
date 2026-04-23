@@ -4,7 +4,6 @@ enum AppEnvironment {
     static let appName = "PennSay"
     static let displayName = "PennSay"
     static let bundleIdentifier = "com.voiceinput.app"
-    static let supportEmail = "pennsay@ashpen.com"
     static let appSupportDirectoryName = "DoubaoMurmur"
     static let logsDirectoryName = "DoubaoMurmur"
     static let githubRepoOwner = "penn6174"
