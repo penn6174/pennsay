@@ -12,7 +12,7 @@
   - `Caps Lock` 引导关闭锁定行为
   - `Fn` 可选但带警告
   - 两个固定触发槽位，每个槽位支持 `无` / `Hold` / `Single Tap Toggle` / `Double Tap Toggle`
-  - 两个启用槽位不能使用同一个触发键，避免状态机冲突
+  - 同一个触发键可同时承载两种触发方式，例如 `Hold + Single Tap` 或 `Hold + Double Tap`
 - ASR 首尾保护
   - Hold 按下立即开始录音，短按误触取消
   - 开头预置静音、松开后延迟收尾并追加尾部静音
@@ -115,6 +115,8 @@ make run
 ```bash
 make release
 ```
+
+本地构建工作区默认放在仓库上一层的 `workspace/build/`，也就是项目文档旁边；仓库里的 `build/` 只是指向该目录的符号链接。
 
 安装到 `/Applications`：
 

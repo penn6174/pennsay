@@ -1,5 +1,6 @@
 APP_NAME := PennSay
-BUILD_ROOT ?= $(HOME)/.voiceinput-build
+WORKSPACE_ROOT ?= $(abspath $(CURDIR)/../workspace)
+BUILD_ROOT ?= $(WORKSPACE_ROOT)/build
 
 .PHONY: build run release install clean
 

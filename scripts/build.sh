@@ -2,11 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+WORKSPACE_ROOT="${PENNSAY_WORKSPACE_ROOT:-${VOICEINPUT_WORKSPACE_ROOT:-$(cd "$ROOT_DIR/.." && pwd)/workspace}}"
 CONFIGURATION="${1:-Debug}"
 APP_NAME="PennSay"
 LEGACY_APP_NAME="VoiceInput"
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
-BUILD_ROOT="${PENNSAY_BUILD_ROOT:-${VOICEINPUT_BUILD_ROOT:-$HOME/.voiceinput-build}}"
+BUILD_ROOT="${PENNSAY_BUILD_ROOT:-${VOICEINPUT_BUILD_ROOT:-$WORKSPACE_ROOT/build}}"
 BUILD_LINK="$ROOT_DIR/build"
 BUILD_DIR="$BUILD_ROOT/$CONFIGURATION"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
