@@ -64,11 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setupStatusItem() {
-        // Square length locks the button to Apple's standard status-item
-        // footprint (same as WiFi / battery / 铃铛 etc.), eliminating the
-        // right-side padding that NSStatusBarButton adds to
-        // variable-length items when the content is a Unicode title.
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.menu = NSMenu()
         statusItem.menu?.delegate = self
         updateStatusButton()
@@ -204,13 +200,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateStatusButton() {
         guard let button = statusItem.button else { return }
-        // Minimal, state-invariant: a single colorful ninja emoji rendered
-        // as the button's title. AppKit handles the font + sizing via its
-        // standard menu-bar metrics, so no manual canvas, no advance-width
-        // padding, no recording-state swap. The red update-badge subview
-        // still layers on top — it's added once in `configureStatusBadge`.
-        button.image = nil
-        button.title = "🥷"
+        let symbolName: String
+        switch appState.recordingState {
+        case .recording, .starting:
+            symbolName = "mic.fill"
+        case .stopping, .refining:
+            symbolName = "waveform"
+        case .idle:
+            symbolName = "waveform"
+        }
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: AppEnvironment.displayName)
         button.toolTip = AppEnvironment.displayName
         configureStatusBadge(on: button)
         updateBadgeView.count = appState.availableUpdateBadgeCount
